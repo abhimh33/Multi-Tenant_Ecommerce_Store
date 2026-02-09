@@ -6,6 +6,7 @@ const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger').child('helm');
 const { HelmError } = require('../utils/errors');
+const { getCircuitBreaker } = require('../utils/circuitBreaker');
 
 const execFileAsync = promisify(execFile);
 
@@ -17,9 +18,17 @@ const execFileAsync = promisify(execFile);
  * - All operations are idempotent: install uses --install, uninstall tolerates not-found.
  * - JSON output is parsed for structured data.
  * - Timeouts are enforced at both Helm and process level.
+ * - Circuit breaker prevents hammering Helm when the cluster is unreachable.
  */
 
 const HELM_BIN = process.env.HELM_BIN || 'helm';
+
+// Circuit breaker for Helm operations
+const helmBreaker = getCircuitBreaker('helm', {
+  failureThreshold: 5,
+  resetTimeoutMs: 30000,
+  isFailure: (err) => isRetryableHelmError(err),
+});
 
 /**
  * Install or upgrade a Helm release.
@@ -74,35 +83,39 @@ async function install({ releaseName, namespace, engine, setValues = {}, valuesF
   logger.debug('Helm command', { args: [HELM_BIN, ...args].join(' ') });
 
   try {
-    const { stdout, stderr } = await execFileAsync(HELM_BIN, args, {
-      timeout: 720000, // 12 min hard process timeout (above Helm's own timeout)
-      maxBuffer: 10 * 1024 * 1024, // 10MB
+    const result = await helmBreaker.call(async () => {
+      const { stdout, stderr } = await execFileAsync(HELM_BIN, args, {
+        timeout: 720000, // 12 min hard process timeout (above Helm's own timeout)
+        maxBuffer: 10 * 1024 * 1024, // 10MB
+      });
+
+      if (stderr) {
+        logger.debug('Helm stderr', { stderr: stderr.substring(0, 500) });
+      }
+
+      let release;
+      try {
+        release = JSON.parse(stdout);
+      } catch {
+        // Some Helm versions output non-JSON with --wait
+        release = { info: { status: 'deployed' } };
+      }
+
+      return {
+        name: releaseName,
+        namespace,
+        status: release?.info?.status || 'deployed',
+        raw: release,
+      };
     });
-
-    if (stderr) {
-      logger.debug('Helm stderr', { stderr: stderr.substring(0, 500) });
-    }
-
-    let release;
-    try {
-      release = JSON.parse(stdout);
-    } catch {
-      // Some Helm versions output non-JSON with --wait
-      release = { info: { status: 'deployed' } };
-    }
 
     logger.info('Helm release installed successfully', {
       releaseName,
       namespace,
-      status: release?.info?.status || 'deployed',
+      status: result.status,
     });
 
-    return {
-      name: releaseName,
-      namespace,
-      status: release?.info?.status || 'deployed',
-      raw: release,
-    };
+    return result;
   } catch (err) {
     const message = parseHelmError(err);
     logger.error('Helm install failed', { releaseName, namespace, error: message });
@@ -134,12 +147,15 @@ async function uninstall({ releaseName, namespace }) {
   logger.info('Uninstalling Helm release', { releaseName, namespace });
 
   try {
-    await execFileAsync(HELM_BIN, args, {
-      timeout: 720000,
+    const result = await helmBreaker.call(async () => {
+      await execFileAsync(HELM_BIN, args, {
+        timeout: 720000,
+      });
+      return true;
     });
 
     logger.info('Helm release uninstalled', { releaseName, namespace });
-    return true;
+    return result;
   } catch (err) {
     // "not found" is not an error for idempotent uninstall
     if (err.stderr && err.stderr.includes('not found')) {

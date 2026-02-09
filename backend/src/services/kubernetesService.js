@@ -4,6 +4,7 @@ const k8s = require('@kubernetes/client-node');
 const config = require('../config');
 const logger = require('../utils/logger').child('kubernetes');
 const { KubernetesError } = require('../utils/errors');
+const { getCircuitBreaker } = require('../utils/circuitBreaker');
 
 /**
  * Kubernetes Service — wraps @kubernetes/client-node for namespace management,
@@ -11,12 +12,24 @@ const { KubernetesError } = require('../utils/errors');
  * 
  * Initialized lazily on first use — supports running the backend
  * without a K8s cluster for development/testing.
+ * Circuit breaker prevents hammering the API server when it's unreachable.
  */
 
 let coreApi = null;
 let appsApi = null;
 let networkingApi = null;
 let kubeConfig = null;
+
+// Circuit breaker for K8s API operations
+const k8sBreaker = getCircuitBreaker('kubernetes', {
+  failureThreshold: 5,
+  resetTimeoutMs: 30000,
+  isFailure: (err) => {
+    // Only count transient failures, not 404s or 409s
+    const status = err.statusCode || err.response?.statusCode;
+    return !status || status >= 500 || status === 0;
+  },
+});
 
 /**
  * Initialize the Kubernetes client.
@@ -80,12 +93,12 @@ async function createNamespace(name, labels = {}) {
   };
 
   try {
-    const res = await coreApi.createNamespace({
+    const res = await k8sBreaker.call(() => coreApi.createNamespace({
       metadata: {
         name,
         labels: { ...defaultLabels, ...labels },
       },
-    });
+    }));
     logger.info('Namespace created', { namespace: name });
     return res.body || res;
   } catch (err) {
@@ -124,7 +137,7 @@ async function getNamespace(name) {
 async function deleteNamespace(name) {
   ensureClient();
   try {
-    await coreApi.deleteNamespace(name);
+    await k8sBreaker.call(() => coreApi.deleteNamespace(name));
     logger.info('Namespace deletion initiated', { namespace: name });
     return true;
   } catch (err) {

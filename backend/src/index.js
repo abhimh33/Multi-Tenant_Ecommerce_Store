@@ -1,5 +1,9 @@
 'use strict';
 
+// ─── Environment Validation (must run before config) ─────────────────────────
+const { validateEnv } = require('./utils/envValidator');
+const { validated: validatedEnv, warnings: envWarnings } = validateEnv();
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -9,13 +13,18 @@ const config = require('./config');
 const logger = require('./utils/logger');
 const requestContext = require('./middleware/requestContext');
 const errorHandler = require('./middleware/errorHandler');
+const { metricsMiddleware } = require('./utils/metrics');
 const storeRoutes = require('./routes/stores');
 const healthRoutes = require('./routes/health');
 const authRoutes = require('./routes/auth');
 const auditRoutes = require('./routes/audit');
+const metricsRoutes = require('./routes/metrics');
 const { runMigrations } = require('./db/migrate');
 const db = require('./db/pool');
 const provisionerService = require('./services/provisionerService');
+
+// Log env validation warnings
+envWarnings.forEach(w => logger.warn(w));
 
 /**
  * Multi-Tenant Ecommerce Control Plane — Express Application
@@ -60,7 +69,8 @@ app.use(limiter);
 
 // ─── Body Parsing ────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
-
+// ─── Metrics Middleware (before routes) ───────────────────────────────────────
+app.use(metricsMiddleware);
 // ─── Request Context (tracing) ───────────────────────────────────────────────
 app.use(requestContext);
 
@@ -69,6 +79,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/stores', storeRoutes);
 app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/audit', auditRoutes);
+app.use('/api/v1/metrics', metricsRoutes);
 
 // Root endpoint — basic platform info
 app.get('/', (req, res) => {
@@ -137,17 +148,37 @@ async function shutdown() {
   logger.info('Shutting down control plane...');
 
   if (server) {
+    // Stop accepting new connections
     server.close(() => {
-      logger.info('HTTP server closed');
+      logger.info('HTTP server closed — no longer accepting connections');
     });
+
+    // Give in-flight requests time to finish (10s grace period)
+    await new Promise(resolve => setTimeout(resolve, 10000));
   }
 
-  // Close database pool
+  // Close database pool (drains active queries)
   await db.close();
 
   logger.info('Control plane shut down gracefully');
   process.exit(0);
 }
+
+// Handle uncaught errors gracefully
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled promise rejection', {
+    reason: reason?.message || String(reason),
+    stack: reason?.stack,
+  });
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception — shutting down', {
+    error: err.message,
+    stack: err.stack,
+  });
+  shutdown();
+});
 
 // Start the server
 start();

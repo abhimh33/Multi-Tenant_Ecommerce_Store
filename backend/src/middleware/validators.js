@@ -37,16 +37,40 @@ const auditQuerySchema = Joi.object({
 
 // ─── Store Schemas ───────────────────────────────────────────────────────────
 
+// Reserved words that cannot be used as store names
+const RESERVED_STORE_NAMES = new Set([
+  'admin', 'api', 'www', 'app', 'mail', 'smtp', 'imap', 'pop', 'ftp',
+  'ssh', 'git', 'svn', 'test', 'staging', 'prod', 'production', 'dev',
+  'development', 'beta', 'alpha', 'demo', 'preview', 'internal',
+  'status', 'health', 'metrics', 'monitor', 'logs', 'audit',
+  'kubernetes', 'k8s', 'kube', 'helm', 'docker', 'registry',
+  'postgres', 'mysql', 'redis', 'mongo', 'database', 'db',
+  'store', 'stores', 'default', 'system', 'root', 'null', 'undefined',
+  'login', 'register', 'auth', 'oauth', 'sso', 'cdn', 'static',
+  'assets', 'public', 'private', 'config', 'settings',
+]);
+
 const createStoreSchema = Joi.object({
   name: Joi.string()
     .min(3)
     .max(63)
     .pattern(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/)
+    .custom((value, helpers) => {
+      if (RESERVED_STORE_NAMES.has(value.toLowerCase())) {
+        return helpers.error('any.invalid');
+      }
+      // No consecutive hyphens (DNS best practice)
+      if (/--/.test(value)) {
+        return helpers.error('string.pattern.base');
+      }
+      return value;
+    })
     .required()
     .messages({
-      'string.pattern.base': 'Store name must be lowercase, alphanumeric with hyphens, and cannot start or end with a hyphen.',
+      'string.pattern.base': 'Store name must be lowercase, alphanumeric with hyphens, no consecutive hyphens, and cannot start or end with a hyphen.',
       'string.min': 'Store name must be at least 3 characters.',
       'string.max': 'Store name must be at most 63 characters (DNS label limit).',
+      'any.invalid': 'This store name is reserved and cannot be used.',
     }),
   engine: Joi.string()
     .valid('woocommerce', 'medusa')
