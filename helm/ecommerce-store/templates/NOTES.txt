@@ -1,0 +1,31 @@
+🎉 Ecommerce Store Provisioned!
+
+  Store ID:   {{ .Values.storeId }}
+  Engine:     {{ .Values.engine }}
+  Namespace:  {{ .Release.Namespace }}
+
+{{- if eq .Values.engine "woocommerce" }}
+
+  WordPress URL:  http://{{ include "ecommerce-store.ingressHost" . }}
+  Admin Panel:    http://{{ include "ecommerce-store.ingressHost" . }}/wp-admin
+
+  Default admin credentials are stored in Secret:
+    {{ include "ecommerce-store.wordpress.secretName" . }}
+
+  To retrieve the admin password:
+    kubectl get secret {{ include "ecommerce-store.wordpress.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.admin-password}' | base64 -d
+
+{{- else if eq .Values.engine "medusa" }}
+
+  Medusa API:     http://{{ include "ecommerce-store.ingressHost" . }}
+  Admin Panel:    http://{{ include "ecommerce-store.ingressHost" . }}/app
+
+  ⚠️  MedusaJS support is a stub — full implementation coming in Phase 6.
+
+{{- end }}
+
+  To check pod status:
+    kubectl get pods -n {{ .Release.Namespace }}
+
+  To view logs:
+    kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ include "ecommerce-store.fullname" . }} --tail=100

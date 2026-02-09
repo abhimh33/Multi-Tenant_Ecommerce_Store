@@ -1,0 +1,27 @@
+version: '3.8'
+
+# Local development infrastructure only.
+# The control plane backend runs on the host — this just provides PostgreSQL.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mtec-postgres
+    environment:
+      POSTGRES_USER: mtec
+      POSTGRES_PASSWORD: mtec_secret
+      POSTGRES_DB: mtec_control_plane
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mtec -d mtec_control_plane"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    driver: local

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "ecommerce-store.fullname" . }}-quota
+  labels:
+    {{- include "ecommerce-store.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuota.requestsCpu | default "1" }}
+    requests.memory: {{ .Values.resourceQuota.requestsMemory | default "1Gi" }}
+    limits.cpu: {{ .Values.resourceQuota.limitsCpu | default "2" }}
+    limits.memory: {{ .Values.resourceQuota.limitsMemory | default "2Gi" }}
+    persistentvolumeclaims: {{ .Values.resourceQuota.pvcs | default "5" | quote }}
+    requests.storage: {{ .Values.resourceQuota.storage | default "10Gi" }}
+    pods: {{ .Values.resourceQuota.pods | default "10" | quote }}
+    services: {{ .Values.resourceQuota.services | default "5" | quote }}

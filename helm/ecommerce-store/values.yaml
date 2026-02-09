@@ -1,0 +1,126 @@
+# Default values for ecommerce-store
+# This is the base configuration — override per-environment with values-local.yaml or values-vps.yaml
+
+# ──────────────────────────────────────────────
+# Store identity (set by provisioner at install time)
+# ──────────────────────────────────────────────
+storeId: ""
+engine: "woocommerce"   # woocommerce | medusa
+
+# ──────────────────────────────────────────────
+# Ingress
+# ──────────────────────────────────────────────
+ingress:
+  className: nginx
+  host: ""              # If empty, generated from storeId + hostSuffix
+  hostSuffix: ".localhost"
+  tls: false
+  tlsSecretName: ""
+  annotations: {}
+
+# ──────────────────────────────────────────────
+# Network Policy
+# ──────────────────────────────────────────────
+networkPolicy:
+  enabled: false        # Enable in production
+
+# ──────────────────────────────────────────────
+# Resource Quota (per-namespace)
+# ──────────────────────────────────────────────
+resourceQuota:
+  requestsCpu: "1"
+  requestsMemory: "1Gi"
+  limitsCpu: "2"
+  limitsMemory: "2Gi"
+  pvcs: "5"
+  storage: "10Gi"
+  pods: "10"
+  services: "5"
+
+# ──────────────────────────────────────────────
+# Limit Range (per-container defaults)
+# ──────────────────────────────────────────────
+limitRange:
+  defaultCpu: "250m"
+  defaultMemory: "256Mi"
+  defaultRequestCpu: "50m"
+  defaultRequestMemory: "64Mi"
+  maxCpu: "1"
+  maxMemory: "1Gi"
+  minCpu: "10m"
+  minMemory: "16Mi"
+  maxStorage: "5Gi"
+  minStorage: "100Mi"
+
+# ──────────────────────────────────────────────
+# MariaDB (WooCommerce engine only)
+# ──────────────────────────────────────────────
+mariadb:
+  image:
+    repository: mariadb
+    tag: "11.4"
+    pullPolicy: IfNotPresent
+  rootPassword: "changeme-root"
+  database: "wordpress"
+  username: "wordpress"
+  password: "changeme-wp"
+  persistence:
+    storageClass: ""
+    size: "2Gi"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+  securityContext:
+    runAsUser: 999
+
+# ──────────────────────────────────────────────
+# WordPress (WooCommerce engine only)
+# ──────────────────────────────────────────────
+wordpress:
+  image:
+    repository: wordpress
+    tag: "6.7-php8.2-apache"
+    pullPolicy: IfNotPresent
+  admin:
+    username: "admin"
+    password: "changeme-admin"
+    email: "admin@example.com"
+  siteTitle: "My Store"
+  persistence:
+    storageClass: ""
+    size: "2Gi"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  securityContext:
+    fsGroup: 33
+  wpcli:
+    image: "wordpress:cli-2.11-php8.2"
+  extraEnv: []
+
+# ──────────────────────────────────────────────
+# MedusaJS (medusa engine only — stub)
+# ──────────────────────────────────────────────
+medusa:
+  image:
+    repository: medusajs/medusa
+    tag: latest
+    pullPolicy: IfNotPresent
+  admin:
+    email: "admin@example.com"
+    password: "supersecret"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"

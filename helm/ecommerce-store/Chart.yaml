@@ -1,0 +1,14 @@
+apiVersion: v2
+name: ecommerce-store
+description: Multi-tenant ecommerce store provisioning chart. Supports WooCommerce and MedusaJS engines.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - ecommerce
+  - multi-tenant
+  - woocommerce
+  - medusa
+  - kubernetes
+maintainers:
+  - name: MT Ecommerce Platform

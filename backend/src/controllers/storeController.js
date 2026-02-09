@@ -1,0 +1,168 @@
+'use strict';
+
+const provisionerService = require('../services/provisionerService');
+const logger = require('../utils/logger').child('store-controller');
+
+/**
+ * Store Controller — handles HTTP request/response for store operations.
+ * This layer is intentionally thin — all business logic lives in the provisioner service.
+ * The controller's job: validate → call service → format response.
+ */
+
+/**
+ * POST /api/v1/stores
+ * Create a new store.
+ */
+async function createStore(req, res, next) {
+  try {
+    const { name, engine, ownerId } = req.body;
+
+    const store = await provisionerService.createStore({ name, engine, ownerId });
+
+    res.status(202).json({
+      requestId: req.requestId,
+      message: 'Store creation initiated. Provisioning is in progress.',
+      store: formatStoreResponse(store),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/v1/stores
+ * List stores with optional filters.
+ */
+async function listStores(req, res, next) {
+  try {
+    const { status, engine, ownerId, limit, offset } = req.query;
+
+    const result = await provisionerService.listStores({
+      status,
+      engine,
+      ownerId,
+      limit: parseInt(limit, 10) || 50,
+      offset: parseInt(offset, 10) || 0,
+    });
+
+    res.json({
+      requestId: req.requestId,
+      stores: result.stores.map(formatStoreResponse),
+      total: result.total,
+      limit: parseInt(limit, 10) || 50,
+      offset: parseInt(offset, 10) || 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/v1/stores/:id
+ * Get a single store by ID.
+ */
+async function getStore(req, res, next) {
+  try {
+    const store = await provisionerService.getStore(req.params.id);
+
+    res.json({
+      requestId: req.requestId,
+      store: formatStoreResponse(store),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * DELETE /api/v1/stores/:id
+ * Delete a store (async — returns 202).
+ */
+async function deleteStore(req, res, next) {
+  try {
+    const store = await provisionerService.deleteStore(req.params.id);
+
+    res.status(202).json({
+      requestId: req.requestId,
+      message: 'Store deletion initiated.',
+      store: formatStoreResponse(store),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/v1/stores/:id/retry
+ * Retry a failed store provisioning.
+ */
+async function retryStore(req, res, next) {
+  try {
+    const store = await provisionerService.retryStore(req.params.id);
+
+    res.status(202).json({
+      requestId: req.requestId,
+      message: 'Store retry initiated. Provisioning will restart.',
+      store: formatStoreResponse(store),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/v1/stores/:id/logs
+ * Get activity logs for a store.
+ */
+async function getStoreLogs(req, res, next) {
+  try {
+    const { limit, offset } = req.query;
+    const result = await provisionerService.getStoreLogs(req.params.id, {
+      limit: parseInt(limit, 10) || 100,
+      offset: parseInt(offset, 10) || 0,
+    });
+
+    res.json({
+      requestId: req.requestId,
+      storeId: req.params.id,
+      logs: result.logs,
+      total: result.total,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Format a store record for API response.
+ * Strips internal fields, structures URLs, adds computed fields.
+ * @param {Object} store
+ * @returns {Object}
+ */
+function formatStoreResponse(store) {
+  return {
+    id: store.id,
+    name: store.name,
+    engine: store.engine,
+    status: store.status,
+    urls: {
+      storefront: store.storefrontUrl || null,
+      admin: store.adminUrl || null,
+    },
+    namespace: store.namespace,
+    failureReason: store.failureReason || null,
+    retryCount: store.retryCount,
+    provisioningDurationMs: store.provisioningDurationMs || null,
+    createdAt: store.createdAt,
+    updatedAt: store.updatedAt,
+  };
+}
+
+module.exports = {
+  createStore,
+  listStores,
+  getStore,
+  deleteStore,
+  retryStore,
+  getStoreLogs,
+};

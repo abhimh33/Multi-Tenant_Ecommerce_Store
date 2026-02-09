@@ -1,0 +1,52 @@
+# values-local.yaml — Local Docker Desktop Kubernetes overrides
+# Usage: helm install <release> ./helm/ecommerce-store -f ./helm/ecommerce-store/values-local.yaml --set storeId=<id>
+
+ingress:
+  className: nginx
+  hostSuffix: ".localhost"
+  tls: false
+
+# Disable network policy on local cluster (no CNI plugin with NetworkPolicy support)
+networkPolicy:
+  enabled: false
+
+# Smaller resource limits for local development
+resourceQuota:
+  requestsCpu: "1"
+  requestsMemory: "1Gi"
+  limitsCpu: "2"
+  limitsMemory: "2Gi"
+  storage: "5Gi"
+  pods: "10"
+
+limitRange:
+  defaultCpu: "100m"
+  defaultMemory: "128Mi"
+  maxCpu: "500m"
+  maxMemory: "512Mi"
+
+# Smaller DB for local
+mariadb:
+  persistence:
+    storageClass: "hostpath"
+    size: "1Gi"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+# Smaller WP for local
+wordpress:
+  persistence:
+    storageClass: "hostpath"
+    size: "1Gi"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "300m"
+      memory: "384Mi"

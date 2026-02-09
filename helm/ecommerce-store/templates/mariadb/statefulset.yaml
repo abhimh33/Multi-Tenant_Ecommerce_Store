@@ -1,0 +1,97 @@
+{{- if eq .Values.engine "woocommerce" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ecommerce-store.mariadb.serviceName" . }}
+  labels:
+    {{- include "ecommerce-store.mariadb.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "ecommerce-store.mariadb.serviceName" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ecommerce-store.mariadb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ecommerce-store.mariadb.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.mariadb.securityContext.runAsNonRoot }}
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      {{- end }}
+      containers:
+        - name: mariadb
+          image: {{ .Values.mariadb.image.repository }}:{{ .Values.mariadb.image.tag }}
+          imagePullPolicy: {{ .Values.mariadb.image.pullPolicy }}
+          ports:
+            - name: mysql
+              containerPort: 3306
+              protocol: TCP
+          env:
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.mariadb.secretName" . }}
+                  key: root-password
+            - name: MARIADB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.mariadb.secretName" . }}
+                  key: database
+            - name: MARIADB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.mariadb.secretName" . }}
+                  key: username
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.mariadb.secretName" . }}
+                  key: password
+          resources:
+            requests:
+              cpu: {{ .Values.mariadb.resources.requests.cpu }}
+              memory: {{ .Values.mariadb.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.mariadb.resources.limits.cpu }}
+              memory: {{ .Values.mariadb.resources.limits.memory }}
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "mariadb -u root -p${MARIADB_ROOT_PASSWORD} -e 'SELECT 1'"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "mariadb -u root -p${MARIADB_ROOT_PASSWORD} -e 'SELECT 1'"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "ecommerce-store.mariadb.labels" . | nindent 10 }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        {{- if .Values.mariadb.persistence.storageClass }}
+        storageClassName: {{ .Values.mariadb.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.mariadb.persistence.size | default "2Gi" }}
+{{- end }}

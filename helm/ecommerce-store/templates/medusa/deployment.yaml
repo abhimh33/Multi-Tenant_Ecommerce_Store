@@ -1,0 +1,101 @@
+{{- if eq .Values.engine "medusa" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ecommerce-store.fullname" . }}-medusa
+  labels:
+    {{- include "ecommerce-store.medusa.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ecommerce-store.medusa.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: medusa
+          image: "{{ .Values.medusa.image.repository | default "medusajs/medusa" }}:{{ .Values.medusa.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.medusa.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              value: "postgres://medusa:medusa@{{ include "ecommerce-store.fullname" . }}-medusa-db:5432/medusa"
+            - name: MEDUSA_ADMIN_EMAIL
+              value: {{ .Values.medusa.admin.email | default "admin@example.com" | quote }}
+            - name: MEDUSA_ADMIN_PASSWORD
+              value: {{ .Values.medusa.admin.password | default "supersecret" | quote }}
+            - name: NODE_ENV
+              value: "production"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: {{ .Values.medusa.resources.requests.cpu | default "100m" }}
+              memory: {{ .Values.medusa.resources.requests.memory | default "256Mi" }}
+            limits:
+              cpu: {{ .Values.medusa.resources.limits.cpu | default "500m" }}
+              memory: {{ .Values.medusa.resources.limits.memory | default "512Mi" }}
+---
+# Medusa requires PostgreSQL — stub for future full implementation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ecommerce-store.fullname" . }}-medusa-db
+  labels:
+    {{- include "ecommerce-store.medusa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: postgres
+          image: "postgres:16-alpine"
+          ports:
+            - name: pg
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: medusa
+            - name: POSTGRES_PASSWORD
+              value: medusa
+            - name: POSTGRES_DB
+              value: medusa
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+{{- end }}
