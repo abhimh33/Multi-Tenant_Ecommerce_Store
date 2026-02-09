@@ -7,6 +7,36 @@ const Joi = require('joi');
  * Strict validation — unknown fields are rejected.
  */
 
+// ─── Auth Schemas ────────────────────────────────────────────────────────────
+
+const registerSchema = Joi.object({
+  email: Joi.string().email().max(255).required(),
+  username: Joi.string().min(3).max(128).pattern(/^[a-zA-Z0-9_-]+$/).required()
+    .messages({
+      'string.pattern.base': 'Username must contain only letters, numbers, hyphens, and underscores.',
+    }),
+  password: Joi.string().min(8).max(128).required()
+    .messages({
+      'string.min': 'Password must be at least 8 characters.',
+    }),
+}).options({ stripUnknown: true });
+
+const loginSchema = Joi.object({
+  email: Joi.string().email().required(),
+  password: Joi.string().required(),
+}).options({ stripUnknown: true });
+
+// ─── Audit Schema ────────────────────────────────────────────────────────────
+
+const auditQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(500).default(100),
+  offset: Joi.number().integer().min(0).default(0),
+  storeId: Joi.string().pattern(/^store-[a-f0-9]{8}$/),
+  eventType: Joi.string().max(64),
+}).options({ stripUnknown: true });
+
+// ─── Store Schemas ───────────────────────────────────────────────────────────
+
 const createStoreSchema = Joi.object({
   name: Joi.string()
     .min(3)
@@ -69,6 +99,9 @@ function validate(schema, source = 'body') {
 }
 
 module.exports = {
+  registerSchema,
+  loginSchema,
+  auditQuerySchema,
   createStoreSchema,
   listStoresSchema,
   storeIdSchema,

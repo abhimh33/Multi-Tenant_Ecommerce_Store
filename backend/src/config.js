@@ -62,6 +62,11 @@ const config = {
     namespacePrefix: process.env.STORE_NAMESPACE_PREFIX || 'store-',
   },
 
+  jwt: {
+    secret: process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production',
+    expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+  },
+
   logging: {
     level: process.env.LOG_LEVEL || 'debug',
   },
@@ -76,6 +81,7 @@ Object.freeze(config.kubernetes);
 Object.freeze(config.helm);
 Object.freeze(config.provisioning);
 Object.freeze(config.store);
+Object.freeze(config.jwt);
 Object.freeze(config.logging);
 
 module.exports = config;

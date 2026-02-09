@@ -11,6 +11,8 @@ const requestContext = require('./middleware/requestContext');
 const errorHandler = require('./middleware/errorHandler');
 const storeRoutes = require('./routes/stores');
 const healthRoutes = require('./routes/health');
+const authRoutes = require('./routes/auth');
+const auditRoutes = require('./routes/audit');
 const { runMigrations } = require('./db/migrate');
 const db = require('./db/pool');
 const provisionerService = require('./services/provisionerService');
@@ -35,8 +37,8 @@ const app = express();
 app.use(helmet());
 app.use(cors({
   origin: config.isDev ? '*' : process.env.CORS_ORIGIN,
-  methods: ['GET', 'POST', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'X-Request-ID'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'X-Request-ID', 'Authorization'],
 }));
 
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
@@ -63,8 +65,10 @@ app.use(express.json({ limit: '1mb' }));
 app.use(requestContext);
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
+app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/stores', storeRoutes);
 app.use('/api/v1/health', healthRoutes);
+app.use('/api/v1/audit', auditRoutes);
 
 // Root endpoint — basic platform info
 app.get('/', (req, res) => {

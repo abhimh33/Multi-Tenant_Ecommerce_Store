@@ -65,6 +65,58 @@ async function getByStoreId(storeId, options = {}) {
   };
 }
 
+/**
+ * List all audit logs with optional filters (for global audit page).
+ * Admin sees all; tenants are filtered by ownerId (joined via stores table).
+ */
+async function listAll(filters = {}) {
+  const { ownerId, storeId, eventType, limit = 100, offset = 0 } = filters;
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
+  if (ownerId) {
+    conditions.push(`s.owner_id = $${idx++}`);
+    params.push(ownerId);
+  }
+
+  if (storeId) {
+    conditions.push(`a.store_id = $${idx++}`);
+    params.push(storeId);
+  }
+
+  if (eventType) {
+    conditions.push(`a.event_type = $${idx++}`);
+    params.push(eventType);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const countResult = await db.query(
+    `SELECT COUNT(*) as total FROM audit_logs a JOIN stores s ON a.store_id = s.id ${whereClause}`,
+    params
+  );
+
+  const result = await db.query(
+    `SELECT a.id, a.store_id, a.event_type, a.previous_status, a.new_status,
+            a.message, a.metadata, a.created_at, s.name as store_name
+     FROM audit_logs a
+     JOIN stores s ON a.store_id = s.id
+     ${whereClause}
+     ORDER BY a.created_at DESC
+     LIMIT $${idx++} OFFSET $${idx++}`,
+    [...params, limit, offset]
+  );
+
+  return {
+    logs: result.rows.map(row => ({
+      ...normalizeAuditRow(row),
+      storeName: row.store_name,
+    })),
+    total: parseInt(countResult.rows[0].total, 10),
+  };
+}
+
 function normalizeAuditRow(row) {
   return {
     id: row.id,
@@ -81,4 +133,5 @@ function normalizeAuditRow(row) {
 module.exports = {
   log,
   getByStoreId,
+  listAll,
 };

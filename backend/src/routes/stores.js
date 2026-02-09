@@ -4,7 +4,11 @@ const express = require('express');
 const router = express.Router();
 
 const storeController = require('../controllers/storeController');
+const { authenticateToken } = require('../middleware/auth');
 const { validate, createStoreSchema, listStoresSchema, storeIdSchema, logsQuerySchema } = require('../middleware/validators');
+
+// All store routes require authentication
+router.use(authenticateToken);
 
 /**
  * Store Routes — /api/v1/stores

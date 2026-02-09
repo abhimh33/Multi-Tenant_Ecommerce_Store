@@ -65,6 +65,14 @@ async function getStore(req, res, next) {
   try {
     const store = await provisionerService.getStore(req.params.id);
 
+    // Tenants can only view their own stores
+    if (req.user.role !== 'admin' && store.ownerId !== req.user.id) {
+      return res.status(403).json({
+        requestId: req.requestId,
+        error: { code: 'FORBIDDEN', message: 'Access denied.', retryable: false },
+      });
+    }
+
     res.json({
       requestId: req.requestId,
       store: formatStoreResponse(store),
@@ -80,6 +88,15 @@ async function getStore(req, res, next) {
  */
 async function deleteStore(req, res, next) {
   try {
+    // Verify ownership first
+    const existing = await provisionerService.getStore(req.params.id);
+    if (req.user.role !== 'admin' && existing.ownerId !== req.user.id) {
+      return res.status(403).json({
+        requestId: req.requestId,
+        error: { code: 'FORBIDDEN', message: 'Access denied.', retryable: false },
+      });
+    }
+
     const store = await provisionerService.deleteStore(req.params.id);
 
     res.status(202).json({
@@ -98,6 +115,14 @@ async function deleteStore(req, res, next) {
  */
 async function retryStore(req, res, next) {
   try {
+    const existing = await provisionerService.getStore(req.params.id);
+    if (req.user.role !== 'admin' && existing.ownerId !== req.user.id) {
+      return res.status(403).json({
+        requestId: req.requestId,
+        error: { code: 'FORBIDDEN', message: 'Access denied.', retryable: false },
+      });
+    }
+
     const store = await provisionerService.retryStore(req.params.id);
 
     res.status(202).json({
