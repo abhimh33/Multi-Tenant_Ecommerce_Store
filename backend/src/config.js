@@ -42,7 +42,7 @@ const config = {
 
   helm: {
     chartPath: process.env.HELM_CHART_PATH
-      ? path.resolve(process.env.HELM_CHART_PATH)
+      ? path.resolve(__dirname, '..', process.env.HELM_CHART_PATH)
       : path.resolve(__dirname, '..', '..', 'helm', 'ecommerce-store'),
     valuesFile: process.env.HELM_VALUES_FILE || 'values-local.yaml',
     timeout: process.env.HELM_TIMEOUT || '10m',

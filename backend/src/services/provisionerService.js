@@ -10,6 +10,7 @@ const k8sService = require('./kubernetesService');
 const { STATES, assertTransition, canDelete, canRetry } = require('../models/storeMachine');
 const { generateStoreId, storeIdToNamespace, storeIdToHelmRelease } = require('../utils/idGenerator');
 const { retryWithBackoff } = require('../utils/retry');
+const storeSetupService = require('./storeSetupService');
 const {
   NotFoundError,
   ConflictError,
@@ -169,6 +170,16 @@ async function provisionStoreAsync(storeId) {
     // Generate random credentials for this store
     const adminPassword = crypto.randomBytes(12).toString('base64url');
     const dbPassword = crypto.randomBytes(16).toString('base64url');
+    const dbRootPassword = crypto.randomBytes(16).toString('base64url');
+
+    // Store credentials in metadata for later use (setup job, admin display)
+    const credentials = {
+      adminUsername: 'admin',
+      adminPassword,
+      adminEmail: 'admin@example.com',
+      dbPassword,
+      dbRootPassword,
+    };
 
     await retryWithBackoff(
       () => helmService.install({
@@ -177,9 +188,10 @@ async function provisionStoreAsync(storeId) {
         engine: store.engine,
         setValues: {
           'wordpress.admin.password': adminPassword,
-          'mariadb.auth.rootPassword': dbPassword,
-          'mariadb.auth.password': dbPassword,
-          [`ingress.host`]: `${storeId}${config.store.domainSuffix}`,
+          'wordpress.admin.username': 'admin',
+          'wordpress.admin.email': 'admin@example.com',
+          'mariadb.rootPassword': dbRootPassword,
+          'mariadb.password': dbPassword,
         },
       }),
       { maxRetries: 1, operationName: 'helmInstall' }
@@ -211,15 +223,51 @@ async function provisionStoreAsync(storeId) {
       throw new ProvisioningError(reason, { retryable: readiness.timedOut });
     }
 
-    // Step 5: Extract URLs
+    // Step 5: WooCommerce setup via kubectl exec
+    if (store.engine === 'woocommerce') {
+      await auditService.log({
+        storeId,
+        eventType: 'info',
+        message: 'Running WooCommerce setup (WP-CLI via kubectl exec)',
+      });
+
+      try {
+        const setupResult = await storeSetupService.setupWooCommerce({
+          namespace: store.namespace,
+          storeId,
+          siteUrl: `http://${storeId}${config.store.domainSuffix}`,
+          credentials,
+        });
+
+        await auditService.log({
+          storeId,
+          eventType: 'info',
+          message: 'WooCommerce setup completed',
+          metadata: { setupResult },
+        });
+      } catch (setupErr) {
+        // Setup failure is non-fatal — store is still usable (user completes install via browser)
+        logger.warn('WooCommerce setup failed (non-fatal)', {
+          storeId,
+          error: setupErr.message,
+        });
+        await auditService.log({
+          storeId,
+          eventType: 'warning',
+          message: `WooCommerce auto-setup failed: ${setupErr.message}. Store is usable — complete setup via browser at /wp-admin.`,
+        });
+      }
+    }
+
+    // Step 6: Extract URLs
     const storefrontUrl = `http://${storeId}${config.store.domainSuffix}`;
     const adminUrl = store.engine === 'woocommerce'
       ? `${storefrontUrl}/wp-admin`
       : `${storefrontUrl}/admin`;
 
-    // Step 6: Transition to READY
+    // Step 7: Transition to READY
     const now = new Date();
-    const provisioningDurationMs = readiness.durationMs;
+    const provisioningDurationMs = Date.now() - new Date(store.provisioningStartedAt).getTime();
 
     store = await storeRegistry.update(storeId, {
       status: STATES.READY,

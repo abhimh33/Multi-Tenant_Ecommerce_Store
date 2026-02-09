@@ -80,14 +80,14 @@ async function createNamespace(name, labels = {}) {
   };
 
   try {
-    const ns = await coreApi.createNamespace({
+    const res = await coreApi.createNamespace({
       metadata: {
         name,
         labels: { ...defaultLabels, ...labels },
       },
     });
     logger.info('Namespace created', { namespace: name });
-    return ns;
+    return res.body || res;
   } catch (err) {
     if (err.statusCode === 409) {
       logger.info('Namespace already exists', { namespace: name });
@@ -108,7 +108,8 @@ async function createNamespace(name, labels = {}) {
 async function getNamespace(name) {
   ensureClient();
   try {
-    return await coreApi.readNamespace({ name });
+    const res = await coreApi.readNamespace(name);
+    return res.body || res;
   } catch (err) {
     if (err.statusCode === 404) return null;
     throw new KubernetesError(`Failed to get namespace ${name}: ${err.message}`);
@@ -123,7 +124,7 @@ async function getNamespace(name) {
 async function deleteNamespace(name) {
   ensureClient();
   try {
-    await coreApi.deleteNamespace({ name });
+    await coreApi.deleteNamespace(name);
     logger.info('Namespace deletion initiated', { namespace: name });
     return true;
   } catch (err) {
@@ -148,8 +149,8 @@ async function deleteNamespace(name) {
 async function checkPodsReady(namespace) {
   ensureClient();
   try {
-    const response = await coreApi.listNamespacedPod({ namespace });
-    const pods = response.items || [];
+    const response = await coreApi.listNamespacedPod(namespace);
+    const pods = response.body?.items || response.items || [];
 
     // Exclude completed/succeeded jobs
     const relevantPods = pods.filter(p =>
@@ -189,8 +190,8 @@ async function checkPodsReady(namespace) {
 async function checkJobsComplete(namespace) {
   ensureClient();
   try {
-    const response = await coreApi.listNamespacedPod({ namespace });
-    const allPods = response.items || [];
+    const response = await coreApi.listNamespacedPod(namespace);
+    const allPods = response.body?.items || response.items || [];
 
     // Find job pods (managed by a Job controller)
     const jobPods = allPods.filter(p =>
@@ -234,21 +235,24 @@ async function verifyCleanup(namespace) {
       remaining.push('namespace still exists');
 
       // Check for remaining pods
-      const pods = await coreApi.listNamespacedPod({ namespace });
-      if (pods.items?.length > 0) {
-        remaining.push(`${pods.items.length} pod(s)`);
+      const podsRes = await coreApi.listNamespacedPod(namespace);
+      const podItems = podsRes.body?.items || podsRes.items || [];
+      if (podItems.length > 0) {
+        remaining.push(`${podItems.length} pod(s)`);
       }
 
       // Check for remaining PVCs
-      const pvcs = await coreApi.listNamespacedPersistentVolumeClaim({ namespace });
-      if (pvcs.items?.length > 0) {
-        remaining.push(`${pvcs.items.length} PVC(s)`);
+      const pvcsRes = await coreApi.listNamespacedPersistentVolumeClaim(namespace);
+      const pvcItems = pvcsRes.body?.items || pvcsRes.items || [];
+      if (pvcItems.length > 0) {
+        remaining.push(`${pvcItems.length} PVC(s)`);
       }
 
       // Check for remaining services
-      const svcs = await coreApi.listNamespacedService({ namespace });
+      const svcsRes = await coreApi.listNamespacedService(namespace);
+      const svcItems = svcsRes.body?.items || svcsRes.items || [];
       // Filter out default kubernetes service
-      const userSvcs = (svcs.items || []).filter(s => s.metadata?.name !== 'kubernetes');
+      const userSvcs = svcItems.filter(s => s.metadata?.name !== 'kubernetes');
       if (userSvcs.length > 0) {
         remaining.push(`${userSvcs.length} service(s)`);
       }
@@ -274,8 +278,9 @@ async function verifyCleanup(namespace) {
 async function getIngresses(namespace) {
   ensureClient();
   try {
-    const response = await networkingApi.listNamespacedIngress({ namespace });
-    return (response.items || []).map(ing => ({
+    const response = await networkingApi.listNamespacedIngress(namespace);
+    const ingressItems = response.body?.items || response.items || [];
+    return ingressItems.map(ing => ({
       name: ing.metadata?.name,
       hosts: (ing.spec?.rules || []).map(r => r.host).filter(Boolean),
       paths: (ing.spec?.rules || []).flatMap(r =>
@@ -294,13 +299,37 @@ async function getIngresses(namespace) {
 // ─── Health Check ────────────────────────────────────────────────────────────
 
 /**
+ * List all namespaces managed by the mt-ecommerce platform.
+ * @returns {Promise<Object[]>} Array of { name, storeId, createdAt }
+ */
+async function listManagedNamespaces() {
+  ensureClient();
+  try {
+    const response = await coreApi.listNamespace(
+      undefined, undefined, undefined, undefined,
+      'app.kubernetes.io/managed-by=mt-ecommerce'
+    );
+    const nsItems = response.body?.items || response.items || [];
+    return nsItems.map(ns => ({
+      name: ns.metadata?.name,
+      storeId: ns.metadata?.labels?.['mt-ecommerce/store-id'] || ns.metadata?.name,
+      createdAt: ns.metadata?.creationTimestamp,
+      phase: ns.status?.phase,
+    }));
+  } catch (err) {
+    logger.error('Failed to list managed namespaces', { error: err.message });
+    throw new KubernetesError(`Failed to list managed namespaces: ${err.message}`);
+  }
+}
+
+/**
  * Check Kubernetes cluster connectivity.
  * @returns {Promise<{ connected: boolean, context?: string, server?: string }>}
  */
 async function healthCheck() {
   try {
     ensureClient();
-    await coreApi.listNamespace({ limit: 1 });
+    await coreApi.listNamespace();
     return {
       connected: true,
       context: kubeConfig.getCurrentContext(),
@@ -408,6 +437,7 @@ module.exports = {
   createNamespace,
   getNamespace,
   deleteNamespace,
+  listManagedNamespaces,
   checkPodsReady,
   checkJobsComplete,
   verifyCleanup,
