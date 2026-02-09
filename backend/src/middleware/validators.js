@@ -54,14 +54,13 @@ const createStoreSchema = Joi.object({
     .messages({
       'any.only': 'Engine must be one of: woocommerce, medusa.',
     }),
-  ownerId: Joi.string()
-    .max(128)
-    .default('default'),
+  // ownerId is intentionally NOT accepted from client — always derived from JWT
 }).options({ stripUnknown: true });
 
 const listStoresSchema = Joi.object({
   status: Joi.string().valid('requested', 'provisioning', 'ready', 'failed', 'deleting', 'deleted'),
   engine: Joi.string().valid('woocommerce', 'medusa'),
+  // ownerId is only settable server-side; admins can pass it as a query param
   ownerId: Joi.string().max(128),
   limit: Joi.number().integer().min(1).max(100).default(50),
   offset: Joi.number().integer().min(0).default(0),

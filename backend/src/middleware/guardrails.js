@@ -16,7 +16,8 @@ const logger = require('../utils/logger').child('guardrails');
  */
 async function enforceStoreLimit(req, res, next) {
   try {
-    const ownerId = req.body.ownerId || 'default';
+    // Always use the authenticated user's ID — never trust client input
+    const ownerId = req.user?.id || 'default';
     const activeCount = await storeRegistry.countActiveByOwner(ownerId);
 
     if (activeCount >= config.provisioning.maxStoresPerUser) {

@@ -15,7 +15,9 @@ const logger = require('../utils/logger').child('store-controller');
  */
 async function createStore(req, res, next) {
   try {
-    const { name, engine, ownerId } = req.body;
+    const { name, engine } = req.body;
+    // Owner is ALWAYS derived from the authenticated user — never from client input
+    const ownerId = req.user.id;
 
     const store = await provisionerService.createStore({ name, engine, ownerId });
 
@@ -35,12 +37,14 @@ async function createStore(req, res, next) {
  */
 async function listStores(req, res, next) {
   try {
-    const { status, engine, ownerId, limit, offset } = req.query;
+    const { status, engine, limit, offset } = req.query;
+    const isAdmin = req.user.role === 'admin';
 
     const result = await provisionerService.listStores({
       status,
       engine,
-      ownerId,
+      // Tenants ALWAYS scoped to their own stores; admins can optionally filter by ownerId
+      ownerId: isAdmin ? req.query.ownerId : req.user.id,
       limit: parseInt(limit, 10) || 50,
       offset: parseInt(offset, 10) || 0,
     });
@@ -141,6 +145,15 @@ async function retryStore(req, res, next) {
  */
 async function getStoreLogs(req, res, next) {
   try {
+    // Verify ownership before returning logs
+    const store = await provisionerService.getStore(req.params.id);
+    if (req.user.role !== 'admin' && store.ownerId !== req.user.id) {
+      return res.status(403).json({
+        requestId: req.requestId,
+        error: { code: 'FORBIDDEN', message: 'Access denied.', retryable: false },
+      });
+    }
+
     const { limit, offset } = req.query;
     const result = await provisionerService.getStoreLogs(req.params.id, {
       limit: parseInt(limit, 10) || 100,
