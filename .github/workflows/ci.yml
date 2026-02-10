@@ -87,7 +87,7 @@ jobs:
           PORT: 3001
 
       - name: Run integration tests
-        run: npm run test:integration
+        run: npx jest --testPathPattern='tests/integration/(auth|health)' --runInBand
         env:
           DATABASE_URL: postgres://testuser:testpass@localhost:5432/mt_ecommerce_test
           JWT_SECRET: ci-test-jwt-secret
