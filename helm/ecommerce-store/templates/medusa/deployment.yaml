@@ -17,6 +17,32 @@ spec:
       labels:
         {{- include "ecommerce-store.medusa.labels" . | nindent 8 }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        # Wait for PostgreSQL to be ready before starting Medusa
+        - name: wait-for-db
+          image: "{{ .Values.medusa.postgresql.image.repository | default "postgres" }}:{{ .Values.medusa.postgresql.image.tag | default "16-alpine" }}"
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "Waiting for PostgreSQL..."
+              until pg_isready -h {{ include "ecommerce-store.fullname" . }}-medusa-db -p 5432 -U $(POSTGRES_USER); do
+                echo "PostgreSQL not ready, retrying in 3s..."
+                sleep 3
+              done
+              echo "PostgreSQL is ready!"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.postgresqlSecretName" . }}
+                  key: username
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
       containers:
         - name: medusa
           image: "{{ .Values.medusa.image.repository | default "medusajs/medusa" }}:{{ .Values.medusa.image.tag | default "latest" }}"
@@ -27,13 +53,32 @@ spec:
               protocol: TCP
           env:
             - name: DATABASE_URL
-              value: "postgres://medusa:medusa@{{ include "ecommerce-store.fullname" . }}-medusa-db:5432/medusa"
-            - name: MEDUSA_ADMIN_EMAIL
-              value: {{ .Values.medusa.admin.email | default "admin@example.com" | quote }}
-            - name: MEDUSA_ADMIN_PASSWORD
-              value: {{ .Values.medusa.admin.password | default "supersecret" | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.postgresqlSecretName" . }}
+                  key: database-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.secretName" . }}
+                  key: jwt-secret
+            - name: COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.secretName" . }}
+                  key: cookie-secret
             - name: NODE_ENV
               value: "production"
+            - name: MEDUSA_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.secretName" . }}
+                  key: admin-email
+            - name: MEDUSA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.secretName" . }}
+                  key: admin-password
           livenessProbe:
             httpGet:
               path: /health
@@ -41,6 +86,7 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 5
+            failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /health
@@ -55,47 +101,4 @@ spec:
             limits:
               cpu: {{ .Values.medusa.resources.limits.cpu | default "500m" }}
               memory: {{ .Values.medusa.resources.limits.memory | default "512Mi" }}
----
-# Medusa requires PostgreSQL — stub for future full implementation
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ include "ecommerce-store.fullname" . }}-medusa-db
-  labels:
-    {{- include "ecommerce-store.medusa.labels" . | nindent 4 }}
-    app.kubernetes.io/component: database
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: database
-  template:
-    metadata:
-      labels:
-        {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: database
-    spec:
-      containers:
-        - name: postgres
-          image: "postgres:16-alpine"
-          ports:
-            - name: pg
-              containerPort: 5432
-          env:
-            - name: POSTGRES_USER
-              value: medusa
-            - name: POSTGRES_PASSWORD
-              value: medusa
-            - name: POSTGRES_DB
-              value: medusa
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 250m
-              memory: 256Mi
 {{- end }}

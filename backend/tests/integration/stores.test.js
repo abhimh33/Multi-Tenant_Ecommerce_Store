@@ -123,6 +123,31 @@ describe('Store API (/api/v1/stores)', () => {
         expect(check.status).toBe(200);
       }
     });
+
+    it('creates a Medusa store', async () => {
+      // Wait briefly to avoid cooldown
+      await new Promise(r => setTimeout(r, 100));
+      const res = await request('POST', '/stores', {
+        token: tenantAToken,
+        body: { name: `medusa-${testId}`, engine: 'medusa' },
+      });
+      expect(res.status).toBe(202);
+      expect(res.data.store).toBeDefined();
+      expect(res.data.store.engine).toBe('medusa');
+      expect(res.data.store.id).toMatch(/^store-[a-f0-9]{8}$/);
+    });
+  });
+
+  describe('GET /stores — Engine Filtering', () => {
+    it('filters stores by engine=medusa', async () => {
+      const res = await request('GET', '/stores?engine=medusa', { token: tenantAToken });
+      expect(res.status).toBe(200);
+      if (res.data.stores.length > 0) {
+        res.data.stores.forEach(store => {
+          expect(store.engine).toBe('medusa');
+        });
+      }
+    });
   });
 
   describe('GET /stores — List with Tenant Isolation', () => {

@@ -52,8 +52,9 @@ export default function CreateStore() {
           <CardHeader>
             <CardTitle>Store Configuration</CardTitle>
             <CardDescription>
-              Configure your new store. A dedicated Kubernetes namespace will be created with
-              WordPress, WooCommerce, and a MariaDB database.
+              {form.engine === 'woocommerce'
+                ? 'Configure your new store. A dedicated Kubernetes namespace will be created with WordPress, WooCommerce, and a MariaDB database.'
+                : 'Configure your new store. A dedicated Kubernetes namespace will be created with MedusaJS and a PostgreSQL database.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -79,11 +80,10 @@ export default function CreateStore() {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${
-                    form.engine === 'woocommerce'
+                  className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${form.engine === 'woocommerce'
                       ? 'border-primary bg-primary/5'
                       : 'border-border hover:border-primary/50'
-                  }`}
+                    }`}
                   onClick={() => setForm({ ...form, engine: 'woocommerce' })}
                 >
                   <span className="text-2xl">🛒</span>
@@ -92,12 +92,15 @@ export default function CreateStore() {
                 </button>
                 <button
                   type="button"
-                  disabled
-                  className="flex flex-col items-center gap-2 rounded-lg border-2 border-border p-4 opacity-50 cursor-not-allowed"
+                  className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${form.engine === 'medusa'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
+                    }`}
+                  onClick={() => setForm({ ...form, engine: 'medusa' })}
                 >
                   <span className="text-2xl">⚡</span>
                   <span className="text-sm font-medium">MedusaJS</span>
-                  <span className="text-xs text-muted-foreground">Coming soon</span>
+                  <span className="text-xs text-muted-foreground">Node.js + PostgreSQL</span>
                 </button>
               </div>
             </div>

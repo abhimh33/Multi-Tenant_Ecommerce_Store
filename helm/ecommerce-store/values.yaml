@@ -5,14 +5,14 @@
 # Store identity (set by provisioner at install time)
 # ──────────────────────────────────────────────
 storeId: ""
-engine: "woocommerce"   # woocommerce | medusa
+engine: "woocommerce" # woocommerce | medusa
 
 # ──────────────────────────────────────────────
 # Ingress
 # ──────────────────────────────────────────────
 ingress:
   className: nginx
-  host: ""              # If empty, generated from storeId + hostSuffix
+  host: "" # If empty, generated from storeId + hostSuffix
   hostSuffix: ".localhost"
   tls: false
   tlsSecretName: ""
@@ -22,7 +22,7 @@ ingress:
 # Network Policy
 # ──────────────────────────────────────────────
 networkPolicy:
-  enabled: false        # Enable in production
+  enabled: false # Enable in production
 
 # ──────────────────────────────────────────────
 # Resource Quota (per-namespace)
@@ -107,7 +107,7 @@ wordpress:
   extraEnv: []
 
 # ──────────────────────────────────────────────
-# MedusaJS (medusa engine only — stub)
+# MedusaJS (medusa engine only)
 # ──────────────────────────────────────────────
 medusa:
   image:
@@ -117,6 +117,8 @@ medusa:
   admin:
     email: "admin@example.com"
     password: "supersecret"
+  jwtSecret: "supersecret-jwt"
+  cookieSecret: "supersecret-cookie"
   resources:
     requests:
       cpu: "100m"
@@ -124,3 +126,22 @@ medusa:
     limits:
       cpu: "500m"
       memory: "512Mi"
+  postgresql:
+    image:
+      repository: postgres
+      tag: "16-alpine"
+    database: "medusa"
+    username: "medusa"
+    password: "changeme-medusa"
+    persistence:
+      storageClass: ""
+      size: "2Gi"
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    securityContext:
+      runAsUser: 999

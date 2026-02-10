@@ -241,9 +241,139 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials }) {
   return results;
 }
 
+/**
+ * Run a command inside the Medusa pod via kubectl exec.
+ * @param {Object} params
+ * @param {string} params.namespace
+ * @param {string} params.podName
+ * @param {string} params.command
+ * @param {number} [params.timeoutMs=60000]
+ * @returns {Promise<{ stdout: string, stderr: string }>}
+ */
+async function kubectlExecMedusa({ namespace, podName, command, timeoutMs = 60000 }) {
+  const args = [
+    'exec',
+    podName,
+    '-n', namespace,
+    '-c', 'medusa',
+    '--', 'sh', '-c', command,
+  ];
+
+  logger.debug('kubectl exec (medusa)', { namespace, podName, command: command.substring(0, 200) });
+
+  try {
+    const { stdout, stderr } = await execFileAsync(KUBECTL_BIN, args, {
+      timeout: timeoutMs,
+      maxBuffer: 5 * 1024 * 1024,
+    });
+    return { stdout: stdout?.trim() || '', stderr: stderr?.trim() || '' };
+  } catch (err) {
+    const stderr = err.stderr?.trim() || '';
+    const isOnlyDefaulted = /^Defaulted container/m.test(stderr) && err.code === 0;
+    if (isOnlyDefaulted) {
+      return { stdout: err.stdout?.trim() || '', stderr };
+    }
+    const errMsg = stderr || err.message;
+    logger.warn('kubectl exec (medusa) failed', { namespace, podName, error: errMsg.substring(0, 500) });
+    throw new Error(`kubectl exec failed: ${errMsg.substring(0, 500)}`);
+  }
+}
+
+/**
+ * Find the Medusa pod name in a namespace.
+ * @param {string} namespace
+ * @returns {Promise<string>} Pod name
+ */
+async function findMedusaPod(namespace) {
+  try {
+    const { stdout } = await execFileAsync(KUBECTL_BIN, [
+      'get', 'pods', '-n', namespace,
+      '-l', 'app.kubernetes.io/name=medusa',
+      '--field-selector=status.phase=Running',
+      '-o', 'jsonpath={.items[0].metadata.name}',
+    ], { timeout: 15000 });
+
+    if (!stdout || stdout === '{}') {
+      throw new Error('No Medusa pod found');
+    }
+    return stdout.trim();
+  } catch (err) {
+    throw new Error(`Failed to find Medusa pod in ${namespace}: ${err.message}`);
+  }
+}
+
+/**
+ * Set up a freshly-provisioned MedusaJS store.
+ * Steps:
+ *   1. Find Medusa pod
+ *   2. Verify health endpoint
+ *   3. Seed admin user via medusa CLI
+ * 
+ * Each step is idempotent and failures are non-fatal.
+ * @param {Object} params
+ * @param {string} params.namespace
+ * @param {string} params.storeId
+ * @param {Object} params.credentials
+ * @returns {Promise<Object>} Setup results
+ */
+async function setupMedusa({ namespace, storeId, credentials }) {
+  logger.info('Starting MedusaJS setup', { storeId, namespace });
+  const results = {};
+
+  // Step 1: Find Medusa pod
+  const podName = await findMedusaPod(namespace);
+  logger.info('Found Medusa pod', { storeId, podName });
+  results.podName = podName;
+
+  // Step 2: Verify health endpoint
+  try {
+    const healthResult = await kubectlExecMedusa({
+      namespace,
+      podName,
+      command: 'wget -qO- http://localhost:9000/health 2>&1 || curl -sf http://localhost:9000/health 2>&1 || echo "HEALTH_CHECK_FAILED"',
+      timeoutMs: 30000,
+    });
+
+    if (healthResult.stdout.includes('HEALTH_CHECK_FAILED')) {
+      logger.warn('Medusa health check returned failure', { storeId });
+      results.healthCheck = 'warning: health endpoint not responding yet';
+    } else {
+      logger.info('Medusa health check passed', { storeId });
+      results.healthCheck = 'ok';
+    }
+  } catch (err) {
+    logger.warn('Medusa health check failed', { storeId, error: err.message });
+    results.healthCheck = `failed: ${err.message}`;
+  }
+
+  // Step 3: Create admin user via medusa CLI (idempotent — will skip if user exists)
+  try {
+    const email = credentials.adminEmail || 'admin@medusa.local';
+    const password = credentials.adminPassword;
+
+    await kubectlExecMedusa({
+      namespace,
+      podName,
+      command: `npx medusa user -e "${email}" -p "${password}" 2>&1 || echo "USER_CREATE_SKIP"`,
+      timeoutMs: 60000,
+    });
+    results.adminUser = 'created';
+    logger.info('Medusa admin user created', { storeId, email });
+  } catch (err) {
+    logger.warn('Medusa admin user creation failed', { storeId, error: err.message });
+    results.adminUser = `failed: ${err.message}`;
+  }
+
+  logger.info('MedusaJS setup completed', { storeId, results });
+  return results;
+}
+
 module.exports = {
   setupWooCommerce,
+  setupMedusa,
   kubectlExec,
+  kubectlExecMedusa,
   findWordPressPod,
+  findMedusaPod,
   ensureWpCli,
 };

@@ -24,6 +24,8 @@ metadata:
     app.kubernetes.io/component: database
 spec:
   type: ClusterIP
+  # Headless service for StatefulSet
+  clusterIP: None
   ports:
     - port: 5432
       targetPort: pg

@@ -144,3 +144,24 @@ Secret name for WordPress credentials.
 {{- define "ecommerce-store.wordpress.secretName" -}}
 {{- printf "%s-wordpress-secret" (include "ecommerce-store.fullname" .) }}
 {{- end }}
+
+{{/*
+Secret name for Medusa application credentials.
+*/}}
+{{- define "ecommerce-store.medusa.secretName" -}}
+{{- printf "%s-medusa-secret" (include "ecommerce-store.fullname" .) }}
+{{- end }}
+
+{{/*
+Secret name for Medusa PostgreSQL credentials.
+*/}}
+{{- define "ecommerce-store.medusa.postgresqlSecretName" -}}
+{{- printf "%s-medusa-pg-secret" (include "ecommerce-store.fullname" .) }}
+{{- end }}
+
+{{/*
+Generate the Medusa PostgreSQL service hostname.
+*/}}
+{{- define "ecommerce-store.medusa.postgresqlServiceName" -}}
+{{- printf "%s-medusa-db" (include "ecommerce-store.fullname" .) }}
+{{- end }}

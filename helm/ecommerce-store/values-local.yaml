@@ -50,3 +50,24 @@ wordpress:
     limits:
       cpu: "300m"
       memory: "384Mi"
+
+# Smaller Medusa for local
+medusa:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "300m"
+      memory: "384Mi"
+  postgresql:
+    persistence:
+      storageClass: "hostpath"
+      size: "1Gi"
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"

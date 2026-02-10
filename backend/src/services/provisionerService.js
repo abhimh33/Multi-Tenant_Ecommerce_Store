@@ -167,32 +167,54 @@ async function provisionStoreAsync(storeId) {
       metadata: { engine: store.engine, namespace: store.namespace },
     });
 
-    // Generate random credentials for this store
+    // Generate random credentials for this store (engine-aware)
     const adminPassword = crypto.randomBytes(12).toString('base64url');
     const dbPassword = crypto.randomBytes(16).toString('base64url');
-    const dbRootPassword = crypto.randomBytes(16).toString('base64url');
+    let credentials;
+    let setValues;
 
-    // Store credentials in metadata for later use (setup job, admin display)
-    const credentials = {
-      adminUsername: 'admin',
-      adminPassword,
-      adminEmail: 'admin@example.com',
-      dbPassword,
-      dbRootPassword,
-    };
+    if (store.engine === 'woocommerce') {
+      const dbRootPassword = crypto.randomBytes(16).toString('base64url');
+      credentials = {
+        adminUsername: 'admin',
+        adminPassword,
+        adminEmail: 'admin@example.com',
+        dbPassword,
+        dbRootPassword,
+      };
+      setValues = {
+        'wordpress.admin.password': adminPassword,
+        'wordpress.admin.username': 'admin',
+        'wordpress.admin.email': 'admin@example.com',
+        'mariadb.rootPassword': dbRootPassword,
+        'mariadb.password': dbPassword,
+      };
+    } else if (store.engine === 'medusa') {
+      const jwtSecret = crypto.randomBytes(32).toString('base64url');
+      const cookieSecret = crypto.randomBytes(32).toString('base64url');
+      credentials = {
+        adminUsername: 'admin',
+        adminPassword,
+        adminEmail: 'admin@medusa.local',
+        dbPassword,
+        jwtSecret,
+        cookieSecret,
+      };
+      setValues = {
+        'medusa.admin.email': 'admin@medusa.local',
+        'medusa.admin.password': adminPassword,
+        'medusa.jwtSecret': jwtSecret,
+        'medusa.cookieSecret': cookieSecret,
+        'medusa.postgresql.password': dbPassword,
+      };
+    }
 
     await retryWithBackoff(
       () => helmService.install({
         releaseName: store.helmRelease,
         namespace: store.namespace,
         engine: store.engine,
-        setValues: {
-          'wordpress.admin.password': adminPassword,
-          'wordpress.admin.username': 'admin',
-          'wordpress.admin.email': 'admin@example.com',
-          'mariadb.rootPassword': dbRootPassword,
-          'mariadb.password': dbPassword,
-        },
+        setValues,
       }),
       { maxRetries: 1, operationName: 'helmInstall' }
     );
@@ -223,7 +245,7 @@ async function provisionStoreAsync(storeId) {
       throw new ProvisioningError(reason, { retryable: readiness.timedOut });
     }
 
-    // Step 5: WooCommerce setup via kubectl exec
+    // Step 5: Engine-specific setup via kubectl exec
     if (store.engine === 'woocommerce') {
       await auditService.log({
         storeId,
@@ -255,6 +277,38 @@ async function provisionStoreAsync(storeId) {
           storeId,
           eventType: 'warning',
           message: `WooCommerce auto-setup failed: ${setupErr.message}. Store is usable — complete setup via browser at /wp-admin.`,
+        });
+      }
+    } else if (store.engine === 'medusa') {
+      await auditService.log({
+        storeId,
+        eventType: 'info',
+        message: 'Running MedusaJS setup (Medusa CLI via kubectl exec)',
+      });
+
+      try {
+        const setupResult = await storeSetupService.setupMedusa({
+          namespace: store.namespace,
+          storeId,
+          credentials,
+        });
+
+        await auditService.log({
+          storeId,
+          eventType: 'info',
+          message: 'MedusaJS setup completed',
+          metadata: { setupResult },
+        });
+      } catch (setupErr) {
+        // Setup failure is non-fatal — Medusa may auto-run migrations on startup
+        logger.warn('MedusaJS setup failed (non-fatal)', {
+          storeId,
+          error: setupErr.message,
+        });
+        await auditService.log({
+          storeId,
+          eventType: 'warning',
+          message: `MedusaJS auto-setup failed: ${setupErr.message}. Store may still be usable — check /health endpoint.`,
         });
       }
     }
@@ -313,7 +367,7 @@ async function provisionStoreAsync(storeId) {
       newStatus: STATES.FAILED,
       message: `Provisioning failed: ${err.message}`,
       metadata: { errorCode: err.code, retryable: err.retryable },
-    }).catch(() => {}); // never crash on audit failure
+    }).catch(() => { }); // never crash on audit failure
 
   } finally {
     activeOperations.delete(storeId);
@@ -444,14 +498,14 @@ async function deleteStoreAsync(storeId) {
     await storeRegistry.update(storeId, {
       status: STATES.FAILED,
       failureReason: `Deletion failed: ${err.message}`,
-    }).catch(() => {});
+    }).catch(() => { });
 
     await auditService.log({
       storeId,
       eventType: 'error',
       newStatus: STATES.FAILED,
       message: `Deletion failed: ${err.message}`,
-    }).catch(() => {});
+    }).catch(() => { });
 
   } finally {
     activeOperations.delete(storeId);

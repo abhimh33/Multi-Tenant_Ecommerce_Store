@@ -2,7 +2,7 @@
 # Usage: helm install <release> ./helm/ecommerce-store -f ./helm/ecommerce-store/values-vps.yaml --set storeId=<id>
 
 ingress:
-  className: traefik        # K3s default ingress
+  className: traefik # K3s default ingress
   hostSuffix: ".yourdomain.com"
   tls: true
   annotations:
@@ -20,7 +20,7 @@ resourceQuota:
 
 mariadb:
   persistence:
-    storageClass: "local-path"    # K3s default storage class
+    storageClass: "local-path" # K3s default storage class
     size: "5Gi"
   resources:
     requests:
@@ -41,3 +41,23 @@ wordpress:
     limits:
       cpu: "1"
       memory: "1Gi"
+
+medusa:
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+  postgresql:
+    persistence:
+      storageClass: "local-path"
+      size: "5Gi"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"

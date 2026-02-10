@@ -189,7 +189,14 @@ export default function StoreDetail() {
           </CardHeader>
           <CardContent className="space-y-3">
             <InfoRow label="Engine">
-              <Badge variant="outline">{store.engine}</Badge>
+              <Badge variant="outline">
+                {store.engine === 'woocommerce' ? '🛒 WooCommerce' : '⚡ MedusaJS'}
+              </Badge>
+            </InfoRow>
+            <InfoRow label="Stack">
+              <span className="text-xs text-muted-foreground">
+                {store.engine === 'woocommerce' ? 'WordPress + MariaDB' : 'Node.js + PostgreSQL'}
+              </span>
             </InfoRow>
             <InfoRow label="Namespace">{store.namespace}</InfoRow>
             <InfoRow label="Retry Count">{store.retryCount}</InfoRow>

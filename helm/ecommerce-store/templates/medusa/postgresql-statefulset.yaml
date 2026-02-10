@@ -1,0 +1,96 @@
+{{- if eq .Values.engine "medusa" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ecommerce-store.fullname" . }}-medusa-db
+  labels:
+    {{- include "ecommerce-store.medusa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  serviceName: {{ include "ecommerce-store.fullname" . }}-medusa-db
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        {{- include "ecommerce-store.medusa.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database
+    spec:
+      securityContext:
+        fsGroup: {{ .Values.medusa.postgresql.securityContext.runAsUser | default 999 }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.medusa.postgresql.image.repository | default "postgres" }}:{{ .Values.medusa.postgresql.image.tag | default "16-alpine" }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: pg
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.postgresqlSecretName" . }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.postgresqlSecretName" . }}
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ecommerce-store.medusa.postgresqlSecretName" . }}
+                  key: database
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+                - -d
+                - $(POSTGRES_DB)
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+                - -d
+                - $(POSTGRES_DB)
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: {{ .Values.medusa.postgresql.resources.requests.cpu | default "50m" }}
+              memory: {{ .Values.medusa.postgresql.resources.requests.memory | default "128Mi" }}
+            limits:
+              cpu: {{ .Values.medusa.postgresql.resources.limits.cpu | default "250m" }}
+              memory: {{ .Values.medusa.postgresql.resources.limits.memory | default "256Mi" }}
+          securityContext:
+            runAsUser: {{ .Values.medusa.postgresql.securityContext.runAsUser | default 999 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.medusa.postgresql.persistence.storageClass }}
+        storageClassName: {{ .Values.medusa.postgresql.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.medusa.postgresql.persistence.size | default "2Gi" }}
+{{- end }}
