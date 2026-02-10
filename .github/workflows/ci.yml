@@ -54,6 +54,31 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
+      - name: Run database migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: postgres://testuser:testpass@localhost:5432/mt_ecommerce_test
+          NODE_ENV: test
+
+      - name: Start backend for integration tests
+        run: |
+          node src/index.js &
+          echo $! > /tmp/backend.pid
+          # Wait for server to become ready (max 30s)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/api/v1/health > /dev/null 2>&1; then
+              echo "✅ Backend ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:3001/api/v1/health || (echo "❌ Backend failed to start" && exit 1)
+        env:
+          DATABASE_URL: postgres://testuser:testpass@localhost:5432/mt_ecommerce_test
+          JWT_SECRET: ci-test-jwt-secret
+          NODE_ENV: test
+          PORT: 3001
+
       - name: Run integration tests
         run: npm run test:integration
         env:
@@ -61,6 +86,13 @@ jobs:
           JWT_SECRET: ci-test-jwt-secret
           NODE_ENV: test
           PORT: 3001
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f /tmp/backend.pid ]; then
+            kill $(cat /tmp/backend.pid) 2>/dev/null || true
+          fi
 
   # ─── Frontend ─────────────────────────────────────────────────────────
   frontend:
