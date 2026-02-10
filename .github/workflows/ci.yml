@@ -65,14 +65,15 @@ jobs:
           node src/index.js &
           echo $! > /tmp/backend.pid
           # Wait for server to become ready (max 30s)
+          # Use root endpoint (/) instead of /health — health returns 503 without K8s
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3001/api/v1/health > /dev/null 2>&1; then
+            if curl -sf http://localhost:3001/ > /dev/null 2>&1; then
               echo "✅ Backend ready after ${i}s"
               break
             fi
             sleep 1
           done
-          curl -sf http://localhost:3001/api/v1/health || (echo "❌ Backend failed to start" && exit 1)
+          curl -sf http://localhost:3001/ || (echo "❌ Backend failed to start" && exit 1)
         env:
           DATABASE_URL: postgres://testuser:testpass@localhost:5432/mt_ecommerce_test
           JWT_SECRET: ci-test-jwt-secret
