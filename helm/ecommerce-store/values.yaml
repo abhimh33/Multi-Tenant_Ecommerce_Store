@@ -111,9 +111,9 @@ wordpress:
 # ──────────────────────────────────────────────
 medusa:
   image:
-    repository: medusajs/medusa
-    tag: latest
-    pullPolicy: IfNotPresent
+    repository: medusa-backend
+    tag: local
+    pullPolicy: Never
   admin:
     email: "admin@example.com"
     password: "supersecret"
@@ -144,4 +144,4 @@ medusa:
         cpu: "250m"
         memory: "256Mi"
     securityContext:
-      runAsUser: 999
+      fsGroup: 999

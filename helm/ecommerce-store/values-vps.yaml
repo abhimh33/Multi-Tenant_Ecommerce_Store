@@ -43,6 +43,10 @@ wordpress:
       memory: "1Gi"
 
 medusa:
+  image:
+    repository: medusa-backend  # Push to your registry: registry.yourdomain.com/medusa-backend
+    tag: latest
+    pullPolicy: IfNotPresent
   resources:
     requests:
       cpu: "200m"

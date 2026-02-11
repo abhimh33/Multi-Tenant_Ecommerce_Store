@@ -1,4 +1,4 @@
-version: '3.8'
+# version: '3.8' (obsolete)
 
 # Local development infrastructure only.
 # The control plane backend runs on the host — this just provides PostgreSQL.

@@ -53,6 +53,10 @@ wordpress:
 
 # Smaller Medusa for local
 medusa:
+  image:
+    repository: medusa-backend
+    tag: local
+    pullPolicy: Never
   resources:
     requests:
       cpu: "50m"

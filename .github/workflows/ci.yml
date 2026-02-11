@@ -173,3 +173,6 @@ jobs:
 
       - name: Build frontend image
         run: docker build -t mt-ecommerce-frontend:ci ./frontend
+
+      - name: Build medusa image
+        run: docker build -t medusa-backend:ci -f docker/medusa/Dockerfile docker/medusa/

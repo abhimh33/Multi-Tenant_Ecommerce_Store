@@ -1,0 +1,19 @@
+{
+    "name": "medusa-store",
+    "version": "1.0.0",
+    "description": "MedusaJS store instance",
+    "scripts": {
+        "start": "medusa start",
+        "seed": "medusa seed -f ./data/seed.json",
+        "build": "medusa build",
+        "migrate": "medusa migrations run"
+    },
+    "dependencies": {
+        "@medusajs/medusa": "^1.20.0",
+        "@medusajs/event-bus-local": "^1.9.0",
+        "@medusajs/cache-inmemory": "^1.8.0",
+        "medusa-fulfillment-manual": "^1.1.0",
+        "medusa-payment-manual": "^1.0.0",
+        "typeorm": "0.3.17"
+    }
+}
