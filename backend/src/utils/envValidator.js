@@ -88,7 +88,7 @@ const envSchema = Joi.object({
  * @throws {Error} If required variables are missing or invalid
  */
 function validateEnv(env = process.env) {
-  const { error, value, warning } = envSchema.validate(env, {
+  const { error, value } = envSchema.validate(env, {
     abortEarly: false,
   });
 

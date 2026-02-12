@@ -21,7 +21,6 @@ import {
   ArrowLeft,
   ExternalLink,
   Trash2,
-  RefreshCw,
   RotateCcw,
   Clock,
   Globe,

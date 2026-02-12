@@ -16,7 +16,7 @@ const { getCircuitBreaker } = require('../utils/circuitBreaker');
  */
 
 let coreApi = null;
-let appsApi = null;
+let _appsApi = null; // initialized for future use (e.g. Deployments/StatefulSets)
 let networkingApi = null;
 let kubeConfig = null;
 
@@ -52,7 +52,7 @@ function initClient() {
     }
 
     coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
-    appsApi = kubeConfig.makeApiClient(k8s.AppsV1Api);
+    _appsApi = kubeConfig.makeApiClient(k8s.AppsV1Api);
     networkingApi = kubeConfig.makeApiClient(k8s.NetworkingV1Api);
 
     logger.info('Kubernetes client initialized', {

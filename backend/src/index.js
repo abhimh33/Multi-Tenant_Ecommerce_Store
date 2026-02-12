@@ -2,7 +2,7 @@
 
 // ─── Environment Validation (must run before config) ─────────────────────────
 const { validateEnv } = require('./utils/envValidator');
-const { validated: validatedEnv, warnings: envWarnings } = validateEnv();
+const { warnings: envWarnings } = validateEnv();
 
 const express = require('express');
 const helmet = require('helmet');
@@ -165,7 +165,7 @@ async function shutdown() {
 }
 
 // Handle uncaught errors gracefully
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason, _promise) => {
   logger.error('Unhandled promise rejection', {
     reason: reason?.message || String(reason),
     stack: reason?.stack,

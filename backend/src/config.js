@@ -12,7 +12,7 @@ const path = require('path');
 if (process.env.NODE_ENV !== 'production') {
   try {
     require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
-  } catch (_) {
+  } catch {
     // dotenv is optional — in production, env vars come from the container/orchestrator
   }
 }

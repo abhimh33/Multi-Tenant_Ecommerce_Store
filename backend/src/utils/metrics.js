@@ -193,7 +193,7 @@ function metricsMiddleware(req, res, next) {
  * Normalize route paths to avoid high cardinality.
  * Replace UUIDs, store IDs, etc. with placeholders.
  */
-function normalizeRoute(path, method) {
+function normalizeRoute(path, _method) {
   return path
     .replace(/store-[a-f0-9]{8}/g, ':id')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, ':uuid')

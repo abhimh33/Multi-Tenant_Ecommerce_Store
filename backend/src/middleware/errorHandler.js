@@ -20,7 +20,6 @@ const { generateRequestId } = require('../utils/idGenerator');
  * }
  */
 
-// eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, _next) {
   const requestId = req.requestId || generateRequestId();
 

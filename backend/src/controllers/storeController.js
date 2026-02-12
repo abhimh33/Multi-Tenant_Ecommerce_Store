@@ -1,7 +1,6 @@
 'use strict';
 
 const provisionerService = require('../services/provisionerService');
-const logger = require('../utils/logger').child('store-controller');
 
 /**
  * Store Controller — handles HTTP request/response for store operations.
