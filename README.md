@@ -426,6 +426,14 @@ These items are documented and accepted trade-offs for the current scope:
 | **F11** | Creation cooldown uses an in-memory `Map` | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed cooldown to prevent cross-instance bypass. |
 | **F12** | `requestId` not propagated to async provisioning logs | Provisioning runs as a background fire-and-forget task after the HTTP response; the original request context is not carried into those log entries. |
 
+## Roadmap
+
+### Phase 2 — Gen AI Orchestration
+
+In the next phase, the provisioning infrastructure built in Phase 1 will serve as the foundation for **AI-driven store creation**. A Gen AI orchestration layer will allow users to describe their desired store configuration in natural language, and the platform will automatically translate that into provisioning parameters, engine selection, and post-setup customization — eliminating manual input entirely.
+
+Detailed requirements and constraints for this phase will be defined separately. The current architecture (state machine, Helm abstraction, multi-engine support) has been designed with this extensibility in mind.
+
 ## License
 
 MIT
