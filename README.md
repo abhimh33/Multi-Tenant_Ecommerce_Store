@@ -235,13 +235,19 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgres://postgres:password@localhost:5432/mt_ecommerce` |
-| `JWT_SECRET` | Secret for JWT token signing | (required) |
+| `DATABASE_URL` | PostgreSQL connection string | (required) |
+| `JWT_SECRET` | Secret for JWT token signing | (required in production) |
 | `PORT` | Backend server port | `3001` |
-| `NODE_ENV` | Environment (`development`/`production`) | `development` |
+| `NODE_ENV` | Environment (`development`/`production`/`test`) | `development` |
 | `KUBECONFIG` | Path to kubeconfig file | `~/.kube/config` |
-| `HELM_VALUES_PROFILE` | Helm values profile (`local`/`vps`) | `local` |
-| `DOMAIN_SUFFIX` | Store URL suffix | `.localhost` (local) / `.yourdomain.com` (vps) |
+| `HELM_CHART_PATH` | Relative path to Helm chart | `../helm/ecommerce-store` |
+| `HELM_VALUES_FILE` | Helm values file to use | `values-local.yaml` |
+| `HELM_BIN` | Full path to Helm binary | `helm` (on PATH) |
+| `STORE_DOMAIN_SUFFIX` | Store URL suffix | `.localhost` |
+| `MAX_STORES_PER_USER` | Max active stores per tenant | `5` |
+| `STORE_CREATION_COOLDOWN_MS` | Cooldown between store creations (ms) | `30000` |
+| `PROVISIONING_TIMEOUT_MS` | Max provisioning wait time (ms) | `600000` |
+| `LOG_LEVEL` | Winston log level | `debug` |
 
 ### Frontend
 
@@ -263,16 +269,58 @@ Authorization: Bearer <token>
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/auth/register` | Register a new user (first user is admin) |
-| `POST` | `/auth/login` | Login and receive JWT token |
-| `POST` | `/stores` | Create a new store |
-| `GET` | `/stores` | List stores (tenant-isolated) |
-| `GET` | `/stores/:id` | Get store details |
-| `DELETE` | `/stores/:id` | Delete a store |
-| `POST` | `/stores/:id/retry` | Retry failed provisioning |
-| `GET` | `/stores/:id/logs` | Get store audit logs |
-| `GET` | `/audit/logs` | Get all audit logs (admin only) |
-| `GET` | `/health` | Health check |
+| `POST` | `/api/v1/auth/register` | Register a new user (first user is admin) |
+| `POST` | `/api/v1/auth/login` | Login and receive JWT token |
+| `GET` | `/api/v1/auth/me` | Get current user profile |
+| `POST` | `/api/v1/stores` | Create a new store |
+| `GET` | `/api/v1/stores` | List stores (tenant-isolated) |
+| `GET` | `/api/v1/stores/:id` | Get store details |
+| `DELETE` | `/api/v1/stores/:id` | Delete a store |
+| `POST` | `/api/v1/stores/:id/retry` | Retry failed provisioning |
+| `GET` | `/api/v1/stores/:id/logs` | Get store audit logs |
+| `GET` | `/api/v1/audit/logs` | Get all audit logs (admin only) |
+| `GET` | `/api/v1/health` | Health check (DB + K8s) |
+| `GET` | `/api/v1/metrics` | Prometheus metrics |
+| `GET` | `/api/v1/metrics/json` | Metrics in JSON format |
+
+## Tenant Isolation Model
+
+Every API request is scoped to the authenticated user's JWT. Tenant isolation is enforced at multiple levels:
+
+| Layer | Mechanism |
+|-------|-----------|
+| **API** | All store queries include `WHERE owner_id = $jwt_user_id`; cross-tenant requests return **403 Forbidden** |
+| **Kubernetes** | Each store is deployed into its own namespace (`store-<id>`), with a **NetworkPolicy** blocking cross-namespace traffic |
+| **RBAC** | Optional Helm-managed `ServiceAccount` + least-privilege `ClusterRole` for the control plane |
+| **Helm** | Engine-conditional templates — WooCommerce and Medusa resources never overlap within a release |
+| **Admin override** | Users with `role = admin` can view all stores but never bypass deletion ownership checks |
+
+## Guardrails & Production Hardening
+
+| Guardrail | Description |
+|-----------|-------------|
+| **State machine** | Strict lifecycle transitions (`requested → provisioning → ready → failed → deleting → deleted`) with invalid-transition rejection |
+| **Optimistic locking** | State updates use `expectedStatus` to prevent race conditions on concurrent transitions |
+| **Store limit** | Configurable per-user store cap (`MAX_STORES_PER_USER`, default 5); excess requests return 429 |
+| **Creation cooldown** | Per-user cooldown between store creations (`STORE_CREATION_COOLDOWN_MS`, default 30 s) |
+| **Login rate limiter** | Sliding window rate limit on `/auth/login` to prevent brute-force attacks |
+| **Circuit breaker** | Wraps Helm/K8s calls; opens after consecutive failures, auto-recovers after a reset timeout |
+| **Retry with backoff** | Failed provisioning steps are retried with exponential backoff and jitter |
+| **Env validation** | All required environment variables are validated on startup via Joi; missing vars cause a hard abort |
+| **Prometheus metrics** | `/metrics` endpoint exposes request counts, latency histograms, active provisioning ops, store totals |
+| **Graceful shutdown** | SIGTERM/SIGINT handlers drain HTTP connections, stop provisioning, and close the DB pool |
+| **Log redaction** | Helm `--set` args containing passwords/secrets are redacted before debug logging |
+| **Helmet + CORS** | HTTP security headers (Helmet) and configurable CORS |
+
+## Known Limitations
+
+These items are documented and accepted trade-offs for the current scope:
+
+| ID | Description | Impact |
+|----|-------------|--------|
+| **F10** | No PostgreSQL Row-Level Security (RLS) | Tenant isolation is enforced at the application layer (all queries filter by `owner_id`). RLS would add defense-in-depth but is not required for the current single-backend architecture. |
+| **F11** | Creation cooldown uses an in-memory `Map` | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed cooldown to prevent cross-instance bypass. |
+| **F12** | `requestId` not propagated to async provisioning logs | Provisioning runs as a background fire-and-forget task after the HTTP response; the original request context is not carried into those log entries. |
 
 ## License
 
