@@ -12,6 +12,17 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 - **Audit logging**: Full event history for every store
 - **Automated setup**: Post-provisioning configuration via kubectl exec (WP-CLI for WooCommerce, Medusa CLI for MedusaJS)
 
+## System Design & Tradeoffs
+
+See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
+
+- Architecture choices and rationale (why Express + Helm + namespace-per-store)
+- Idempotency, failure handling, and cleanup strategies
+- State machine design with optimistic locking
+- Circuit breaker and retry-with-backoff patterns
+- Production changes required (DNS, TLS, storage, secrets, monitoring)
+- Known tradeoffs and accepted limitations
+
 ## Architecture
 
 ```
@@ -60,6 +71,8 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 
 ```
 .
+├── SYSTEM_DESIGN.md       # Architecture decisions & tradeoffs
+├── docker-compose.dev.yml # Local PostgreSQL for development
 ├── backend/               # Node.js control plane
 │   ├── src/
 │   │   ├── controllers/   # HTTP route handlers
@@ -102,25 +115,32 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 
 ### Local Development Setup
 
+#### 0. Start PostgreSQL
+
+```bash
+# From the project root — starts PostgreSQL 16 on port 5433
+docker compose -f docker-compose.dev.yml up -d
+```
+
 #### 1. Start the Backend (Control Plane)
 
 ```bash
 cd backend
 npm install
 
-# Set up environment variables
-cat > .env << EOF
-DATABASE_URL=postgres://user:password@localhost:5432/mt_ecommerce
-JWT_SECRET=your-secret-key-here
-PORT=3001
-NODE_ENV=development
-EOF
+# Copy the example env file and adjust if needed
+cp .env.example .env
+# Default .env.example already contains the correct DATABASE_URL:
+#   DATABASE_URL=postgresql://mtec:mtec_secret@localhost:5433/mtec_control_plane
 
 # Run database migrations
 npm run db:migrate
 
+# Seed the admin user (admin@example.com / admin123!)
+npm run db:seed
+
 # Start the backend
-npm run dev
+npm run dev          # Runs on http://localhost:3001
 ```
 
 #### 2. Start the Frontend
@@ -128,24 +148,46 @@ npm run dev
 ```bash
 cd frontend
 npm install
-
-# Set API URL (optional, defaults to http://localhost:3001)
-echo "VITE_API_URL=http://localhost:3001" > .env
-
-# Start the frontend
-npm run dev
+npm run dev          # Runs on http://localhost:5173
 ```
 
-Visit `http://localhost:5173` and register an admin account.
+> The Vite dev server proxies `/api` requests to the backend automatically.
 
-#### 3. Create a Store
+#### 3. Enable Kubernetes (Required for Provisioning)
 
-1. Log in to the dashboard
+Open Docker Desktop → **Settings → Kubernetes → Enable Kubernetes** and wait for the cluster to start. Then install NGINX Ingress:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+```
+
+#### 4. Create a Store
+
+1. Open `http://localhost:5173` and **register** a new account (the first user becomes admin)
 2. Click **"Create Store"**
-3. Choose an engine (WooCommerce or MedusaJS)
-4. Enter a store name
-5. Wait for provisioning to complete
-6. Access the store via the provided URLs
+3. Choose an engine (**WooCommerce** or **MedusaJS**)
+4. Enter a store name and submit
+5. The dashboard shows provisioning progress in real time
+6. Once the status reaches **ready**, click the store to see its details and URLs
+
+#### 5. Place a Test Order (WooCommerce)
+
+After the store reaches **ready** status the automated setup has already installed WooCommerce, the Storefront theme, configured Cash-on-Delivery (COD) payment, and created a **Sample Product ($19.99)**.
+
+1. Open the store URL shown on the dashboard (e.g. `http://store-<id>.localhost`)
+2. Browse the shop — you will see the "Sample Product"
+3. Click **Add to Cart → View Cart → Proceed to Checkout**
+4. Fill in billing details (any dummy data) and choose **Cash on Delivery**
+5. Click **Place Order** — you will see an order confirmation with an order number
+6. To verify in the admin panel, visit `http://store-<id>.localhost/wp-admin` and go to **WooCommerce → Orders**
+
+> **MedusaJS stores**: The admin panel is available at port 9000 (`/app`). Use the admin credentials shown in the store detail page to log in, create products, and manage orders through the Medusa admin UI.
+
+#### 6. Delete a Store
+
+1. Navigate to the store detail page on the dashboard
+2. Click **"Delete Store"** and confirm
+3. The platform tears down the Kubernetes namespace, Helm release, and all associated resources
 
 ## CI/CD Pipeline
 
@@ -209,25 +251,87 @@ npm test
 ### Docker Desktop (Local)
 
 ```bash
-# Enable Kubernetes in Docker Desktop settings
-# Install Nginx Ingress
+# Enable Kubernetes in Docker Desktop → Settings → Kubernetes
+# Install NGINX Ingress Controller
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
 
-# The backend will use values-local.yaml automatically for local development
+# Stores will be accessible at http://store-<id>.localhost
+# The backend uses values-local.yaml automatically (HELM_VALUES_FILE=values-local.yaml)
 ```
 
-### K3s (VPS)
+### K3s (VPS / Production)
 
 ```bash
-# Install k3s (comes with Traefik ingress)
+# 1. Install k3s (comes with Traefik ingress & local-path storage)
 curl -sfL https://get.k3s.io | sh -
-
-# Set KUBECONFIG
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-# The backend will use values-vps.yaml for VPS deployments
-# Configure your domain in values-vps.yaml (ingress.hostSuffix)
+# 2. Install cert-manager for automatic TLS certificates
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+
+# 3. Create a ClusterIssuer for Let's Encrypt
+cat <<EOF | kubectl apply -f -
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@yourdomain.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            class: traefik
+EOF
+
+# 4. Clone the repo and install backend dependencies
+git clone https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store.git
+cd Multi-Tenant_Ecommerce_Store/backend
+npm ci --production
+
+# 5. Install PostgreSQL (or use a managed service)
+sudo apt-get install -y postgresql-16
+sudo -u postgres createuser mtec --pwprompt
+sudo -u postgres createdb mtec_control_plane --owner=mtec
+
+# 6. Configure the backend
+cat > .env << 'EOF'
+PORT=3001
+NODE_ENV=production
+DATABASE_URL=postgresql://mtec:<password>@localhost:5432/mtec_control_plane
+JWT_SECRET=<generate-a-strong-random-secret>
+KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+HELM_CHART_PATH=../helm/ecommerce-store
+HELM_VALUES_FILE=values-vps.yaml
+STORE_DOMAIN_SUFFIX=.yourdomain.com
+MAX_STORES_PER_USER=5
+LOG_LEVEL=info
+EOF
+
+# 7. Run migrations and seed the admin user
+npm run db:migrate
+npm run db:seed
+
+# 8. Start the backend with a process manager
+npm install -g pm2
+pm2 start src/index.js --name mtec-backend
+pm2 save && pm2 startup
+
+# 9. Build and serve the frontend (behind Nginx)
+cd ../frontend
+npm ci && npm run build
+# Copy dist/ to /var/www/mtec-frontend and configure Nginx to serve it
+# with a reverse proxy for /api → http://localhost:3001
+
+# 10. Update values-vps.yaml with your domain
+#  ingress.hostSuffix: ".yourdomain.com"
+#  medusa.image.repository: registry.yourdomain.com/medusa-backend
 ```
+
+> **DNS**: Create a wildcard DNS record `*.yourdomain.com → <VPS_IP>` so that all store subdomains resolve correctly.
 
 ## Environment Variables
 
