@@ -17,12 +17,13 @@ router.use(authenticateToken);
  * Every response includes a requestId for traceability.
  */
 
-const { enforceCreationCooldown } = require('../middleware/guardrails');
+const { enforceStoreLimit, enforceCreationCooldown } = require('../middleware/guardrails');
 
-// Create a new store (with cooldown enforcement)
+// Create a new store (with limit + cooldown enforcement)
 router.post(
   '/',
   validate(createStoreSchema, 'body'),
+  enforceStoreLimit,
   enforceCreationCooldown,
   storeController.createStore
 );

@@ -1,0 +1,76 @@
+{{/*
+  RBAC resources for the control plane backend service account.
+  These are installed at the cluster level (not per-store namespace).
+  
+  The backend needs permissions to:
+  - Create/delete namespaces (for store isolation)
+  - Create/list/delete pods, services, PVCs in store namespaces
+  - Create/list/delete secrets in store namespaces
+  - List ingresses in store namespaces
+  
+  NOTE: These resources are NOT deployed per-store — they should be
+  applied once to the cluster where the backend runs. Include this
+  chart with a dedicated install or apply separately.
+*/}}
+
+{{- if .Values.rbac.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.rbac.serviceAccountName | default "mt-ecommerce-backend" }}
+  namespace: {{ .Values.rbac.namespace | default "default" }}
+  labels:
+    {{- include "ecommerce-store.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mt-ecommerce-provisioner
+  labels:
+    {{- include "ecommerce-store.labels" . | nindent 4 }}
+rules:
+  # Namespace management (create/delete per-store namespaces)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  # Pod management (readiness polling, kubectl exec for setup)
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log"]
+    verbs: ["get", "list", "watch", "create"]
+  # Service and PVC read (cleanup verification)
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims"]
+    verbs: ["get", "list"]
+  # Ingress read (URL extraction)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list"]
+  # Secret read (credential retrieval only — Helm creates secrets)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  # Deployments and StatefulSets (readiness checks)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list"]
+  # Jobs (setup job completion checks)  
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mt-ecommerce-provisioner
+  labels:
+    {{- include "ecommerce-store.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mt-ecommerce-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.rbac.serviceAccountName | default "mt-ecommerce-backend" }}
+    namespace: {{ .Values.rbac.namespace | default "default" }}
+{{- end }}

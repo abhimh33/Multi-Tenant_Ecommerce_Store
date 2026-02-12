@@ -8,6 +8,14 @@ storeId: ""
 engine: "woocommerce" # woocommerce | medusa
 
 # ──────────────────────────────────────────────
+# RBAC (for the control plane backend service account)
+# ──────────────────────────────────────────────
+rbac:
+  create: false # Set to true when deploying RBAC resources (one-time cluster setup)
+  serviceAccountName: "mt-ecommerce-backend"
+  namespace: "default"
+
+# ──────────────────────────────────────────────
 # Ingress
 # ──────────────────────────────────────────────
 ingress:
@@ -22,7 +30,7 @@ ingress:
 # Network Policy
 # ──────────────────────────────────────────────
 networkPolicy:
-  enabled: false # Enable in production
+  enabled: true # Enabled by default for tenant isolation; disable for local dev without CNI support
 
 # ──────────────────────────────────────────────
 # Resource Quota (per-namespace)

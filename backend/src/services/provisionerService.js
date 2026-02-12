@@ -17,6 +17,11 @@ const {
   StoreLimitError,
   ProvisioningError,
 } = require('../utils/errors');
+const {
+  storesTotal,
+  provisioningDuration,
+  activeProvisioningOps,
+} = require('../utils/metrics');
 
 /**
  * Provisioner Service — the central orchestrator for store lifecycle.
@@ -127,13 +132,21 @@ async function provisionStoreAsync(storeId) {
     let store = await storeRegistry.findById(storeId);
     if (!store) throw new NotFoundError('Store', storeId);
 
-    // Step 1: Transition to PROVISIONING
+    // Step 1: Transition to PROVISIONING (with optimistic lock)
     assertTransition(store.status, STATES.PROVISIONING);
+    activeProvisioningOps.inc();
     store = await storeRegistry.update(storeId, {
       status: STATES.PROVISIONING,
       provisioningStartedAt: new Date().toISOString(),
       failureReason: null,
-    });
+    }, { expectedStatus: store.status });
+
+    if (!store) {
+      throw new ConflictError(
+        'Store status changed concurrently. Aborting provisioning.',
+        'Retry the operation.'
+      );
+    }
 
     await auditService.log({
       storeId,
@@ -346,6 +359,10 @@ async function provisionStoreAsync(storeId) {
       durationMs: provisioningDurationMs,
     });
 
+    // Update metrics
+    storesTotal.inc({ status: 'ready' });
+    provisioningDuration.observe({ engine: store.engine }, provisioningDurationMs);
+
   } catch (err) {
     // Transition to FAILED
     logger.error('Store provisioning failed', { storeId, error: err.message });
@@ -369,8 +386,11 @@ async function provisionStoreAsync(storeId) {
       metadata: { errorCode: err.code, retryable: err.retryable },
     }).catch(() => { }); // never crash on audit failure
 
+    storesTotal.inc({ status: 'failed' });
+
   } finally {
     activeOperations.delete(storeId);
+    activeProvisioningOps.dec();
   }
 }
 
@@ -390,11 +410,18 @@ async function deleteStore(storeId) {
     throw new ConflictError(deleteCheck.reason, 'Wait for the current operation to complete.');
   }
 
-  // Transition to DELETING
+  // Transition to DELETING (with optimistic lock)
   assertTransition(store.status, STATES.DELETING);
   const updatedStore = await storeRegistry.update(storeId, {
     status: STATES.DELETING,
-  });
+  }, { expectedStatus: store.status });
+
+  if (!updatedStore) {
+    throw new ConflictError(
+      'Store status changed concurrently. Aborting deletion.',
+      'Refresh and try again.'
+    );
+  }
 
   await auditService.log({
     storeId,

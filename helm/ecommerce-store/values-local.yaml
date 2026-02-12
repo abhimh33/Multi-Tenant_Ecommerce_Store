@@ -6,7 +6,7 @@ ingress:
   hostSuffix: ".localhost"
   tls: false
 
-# Disable network policy on local cluster (no CNI plugin with NetworkPolicy support)
+# Disable network policy on local cluster (Docker Desktop CNI may not support it)
 networkPolicy:
   enabled: false
 

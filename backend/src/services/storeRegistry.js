@@ -117,11 +117,16 @@ async function list(filters = {}) {
 
 /**
  * Update store status and related fields.
+ * Supports optimistic locking via `expectedStatus` — when provided, the UPDATE
+ * includes a `WHERE status = $N` clause to prevent race conditions.
+ *
  * @param {string} id
  * @param {Object} updates - Fields to update
- * @returns {Promise<Object>} Updated store row
+ * @param {Object} [options]
+ * @param {string} [options.expectedStatus] - If set, only update when current status matches
+ * @returns {Promise<Object>} Updated store row (null if optimistic lock failed)
  */
-async function update(id, updates) {
+async function update(id, updates, options = {}) {
   const setClauses = [];
   const params = [];
   let paramIndex = 1;
@@ -150,14 +155,29 @@ async function update(id, updates) {
     return findById(id);
   }
 
+  // Optimistic locking: only update if current status matches expected
+  let whereClause = `WHERE id = $${paramIndex++}`;
   params.push(id);
+
+  if (options.expectedStatus) {
+    whereClause += ` AND status = $${paramIndex++}`;
+    params.push(options.expectedStatus);
+  }
+
   const result = await db.query(
-    `UPDATE stores SET ${setClauses.join(', ')} WHERE id = $${paramIndex}
+    `UPDATE stores SET ${setClauses.join(', ')} ${whereClause}
      RETURNING ${STORE_COLUMNS}`,
     params
   );
 
   if (result.rows.length === 0) {
+    if (options.expectedStatus) {
+      logger.warn('Optimistic lock failed — status changed concurrently', {
+        storeId: id,
+        expectedStatus: options.expectedStatus,
+        attempted: updates.status,
+      });
+    }
     return null;
   }
 

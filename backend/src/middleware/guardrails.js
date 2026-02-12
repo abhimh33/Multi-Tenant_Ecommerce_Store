@@ -11,7 +11,9 @@ const logger = require('../utils/logger').child('guardrails');
 
 // In-memory cooldown tracker: userId → last store creation timestamp
 const cooldownMap = new Map();
-const COOLDOWN_MS = parseInt(process.env.STORE_CREATION_COOLDOWN_MS, 10) || 30000; // 30s
+const COOLDOWN_MS = process.env.STORE_CREATION_COOLDOWN_MS !== undefined
+  ? parseInt(process.env.STORE_CREATION_COOLDOWN_MS, 10)
+  : 30000; // 30s
 
 /**
  * Enforce per-user store creation limit.

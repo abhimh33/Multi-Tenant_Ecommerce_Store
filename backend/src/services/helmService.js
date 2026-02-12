@@ -80,7 +80,15 @@ async function install({ releaseName, namespace, engine, setValues = {}, valuesF
   }
 
   logger.info('Installing Helm release', { releaseName, namespace, engine });
-  logger.debug('Helm command', { args: [HELM_BIN, ...args].join(' ') });
+  // Redact --set values that may contain secrets
+  const redactedArgs = args.map((a, i) => {
+    if (i > 0 && args[i - 1] === '--set' && /password|secret/i.test(a)) {
+      const eqIdx = a.indexOf('=');
+      return eqIdx >= 0 ? a.substring(0, eqIdx + 1) + '[REDACTED]' : a;
+    }
+    return a;
+  });
+  logger.debug('Helm command', { args: [HELM_BIN, ...redactedArgs].join(' ') });
 
   try {
     const result = await helmBreaker.call(async () => {
