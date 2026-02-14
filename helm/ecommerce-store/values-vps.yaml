@@ -1,52 +1,96 @@
 # values-vps.yaml — VPS / K3s / production-like overrides
-# Usage: helm install <release> ./helm/ecommerce-store -f ./helm/ecommerce-store/values-vps.yaml --set storeId=<id>
+# Usage: helm install <release> ./helm/ecommerce-store \
+#          -f ./helm/ecommerce-store/values-vps.yaml \
+#          --set storeId=<id>
+#
+# Prerequisites (applied once to the cluster):
+#   1. k3s installed (includes Traefik + local-path provisioner)
+#   2. cert-manager deployed with a letsencrypt-prod ClusterIssuer
+#   3. Wildcard DNS record *.yourdomain.com → VPS IP
+#   4. NetworkPolicy-capable CNI (k3s Canal/Flannel is fine for egress/ingress)
+#
+# This file documents every intentional deviation from the base values.yaml.
 
+# ──────────────────────────────────────────────
+# Ingress — Traefik (k3s built-in) with automatic TLS
+# ──────────────────────────────────────────────
 ingress:
-  className: traefik # K3s default ingress
-  hostSuffix: ".yourdomain.com"
-  tls: true
+  className: traefik                    # k3s ships Traefik; Docker Desktop uses nginx
+  hostSuffix: ".yourdomain.com"          # Wildcard DNS must resolve to VPS IP
+  tls: true                             # Enables TLS block on Ingress resources
+  tlsSecretName: ""                     # cert-manager auto-creates per-host secrets
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
 
+# ──────────────────────────────────────────────
+# Network isolation — MUST be enabled in production
+# ──────────────────────────────────────────────
 networkPolicy:
-  enabled: true
+  enabled: true                         # Blocks cross-namespace tenant traffic
 
+# ──────────────────────────────────────────────
+# Resource Quotas — production-sized limits
+# ──────────────────────────────────────────────
 resourceQuota:
   requestsCpu: "1"
   requestsMemory: "1Gi"
   limitsCpu: "2"
   limitsMemory: "2Gi"
-  storage: "20Gi"
+  storage: "20Gi"                       # Local: 5Gi — VPS stores need more data room
+  pvcs: "5"
+  pods: "10"
+  services: "5"
 
+# ──────────────────────────────────────────────
+# Limit Range — sane per-container defaults
+# ──────────────────────────────────────────────
+limitRange:
+  defaultCpu: "250m"
+  defaultMemory: "256Mi"
+  defaultRequestCpu: "50m"
+  defaultRequestMemory: "64Mi"
+  maxCpu: "1"
+  maxMemory: "1Gi"
+
+# ──────────────────────────────────────────────
+# MariaDB (WooCommerce engine)
+# ──────────────────────────────────────────────
 mariadb:
   persistence:
-    storageClass: "local-path" # K3s default storage class
-    size: "5Gi"
+    storageClass: "local-path"           # k3s default provisioner (Docker Desktop: hostpath)
+    size: "5Gi"                          # Local: 1Gi
   resources:
     requests:
       cpu: "100m"
-      memory: "256Mi"
+      memory: "256Mi"                    # Local: 128Mi
     limits:
-      cpu: "500m"
-      memory: "512Mi"
+      cpu: "500m"                        # Local: 200m
+      memory: "512Mi"                    # Local: 256Mi
 
+# ──────────────────────────────────────────────
+# WordPress (WooCommerce engine)
+# ──────────────────────────────────────────────
 wordpress:
   persistence:
     storageClass: "local-path"
     size: "5Gi"
   resources:
     requests:
-      cpu: "200m"
-      memory: "256Mi"
+      cpu: "200m"                        # Local: 50m
+      memory: "256Mi"                    # Local: 128Mi
     limits:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: "1"                           # Local: 300m
+      memory: "1Gi"                      # Local: 384Mi
 
+# ──────────────────────────────────────────────
+# MedusaJS engine
+# ──────────────────────────────────────────────
 medusa:
   image:
-    repository: medusa-backend  # Push to your registry: registry.yourdomain.com/medusa-backend
-    tag: latest
-    pullPolicy: IfNotPresent
+    repository: medusa-backend           # Push to registry: registry.yourdomain.com/medusa-backend
+    tag: latest                          # Local: local (Never pull)
+    pullPolicy: IfNotPresent             # Local: Never
   resources:
     requests:
       cpu: "200m"
@@ -65,3 +109,13 @@ medusa:
       limits:
         cpu: "500m"
         memory: "512Mi"
+
+# ──────────────────────────────────────────────
+# Storefront (MedusaJS SPA — optional)
+# ──────────────────────────────────────────────
+storefront:
+  enabled: false
+  image:
+    repository: storefront-medusa        # Push to registry
+    tag: latest
+    pullPolicy: IfNotPresent

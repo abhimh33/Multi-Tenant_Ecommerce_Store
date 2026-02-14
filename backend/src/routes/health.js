@@ -48,9 +48,30 @@ router.get('/', async (req, res) => {
   });
 });
 
-// Lightweight liveness probe (no dependency checks)
+// Lightweight liveness probe (no dependency checks — always responds if process is alive)
 router.get('/live', (req, res) => {
   res.status(200).json({ status: 'alive' });
+});
+
+/**
+ * Readiness probe — returns 200 only when the service is fully operational.
+ * Returns 503 during graceful shutdown so load balancers stop routing to this instance.
+ * Suitable for: Kubernetes readinessProbe, HAProxy health checks, pm2 ready signal.
+ */
+router.get('/ready', async (req, res) => {
+  // During shutdown, report not-ready immediately
+  if (process.exitCode !== undefined) {
+    return res.status(503).json({ status: 'shutting-down', ready: false });
+  }
+
+  const dbHealthy = await db.healthCheck();
+  const ready = dbHealthy; // DB is the minimum requirement for readiness
+
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'not-ready',
+    ready,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 module.exports = router;

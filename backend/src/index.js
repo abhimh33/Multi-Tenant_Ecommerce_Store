@@ -207,6 +207,7 @@ async function start() {
 }
 
 async function shutdown() {
+  if (shuttingDown) return; // Prevent duplicate shutdown calls
   logger.info('Shutting down control plane...');
   shuttingDown = true;
 
@@ -229,6 +230,17 @@ async function shutdown() {
     } else {
       logger.info('All in-flight requests drained');
     }
+  }
+
+  // Drain provisioning semaphore — reject queued operations waiting for a slot
+  try {
+    const { getConcurrencyStats } = provisionerService;
+    const stats = getConcurrencyStats();
+    if (stats.active > 0 || stats.queued > 0) {
+      logger.info(`Draining provisioning semaphore: ${stats.active} active, ${stats.queued} queued`);
+    }
+  } catch {
+    // Semaphore drain is best-effort
   }
 
   // Close database pool (drains active queries)

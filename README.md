@@ -162,6 +162,9 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 │       ├── values.yaml        # Defaults
 │       ├── values-local.yaml  # Docker Desktop overrides
 │       └── values-vps.yaml    # K3s production overrides
+├── scripts/
+│   ├── verify-deployment.sh   # Deployment verification checklist
+│   └── helm-upgrade.sh        # Helm upgrade/rollback helper
 └── .github/
     └── workflows/
         └── ci.yml             # GitHub Actions CI pipeline
@@ -417,6 +420,9 @@ npm ci && npm run build
 | `MAX_STORES_PER_USER` | Max active stores per tenant | `5` |
 | `STORE_CREATION_COOLDOWN_MS` | Cooldown between store creations (ms) | `30000` |
 | `PROVISIONING_TIMEOUT_MS` | Max provisioning wait time (ms) | `600000` |
+| `PROVISIONING_MAX_CONCURRENT` | Max parallel Helm operations | `3` |
+| `PROVISIONING_MAX_QUEUE` | Max pending operations before rejection | `10` |
+| `PROVISIONING_QUEUE_TIMEOUT_MS` | Max queue wait time (ms) | `120000` |
 | `LOG_LEVEL` | Winston log level | `debug` |
 
 ### Frontend
@@ -449,7 +455,9 @@ Authorization: Bearer <token>
 | `POST` | `/api/v1/stores/:id/retry` | Retry failed provisioning |
 | `GET` | `/api/v1/stores/:id/logs` | Get store audit logs |
 | `GET` | `/api/v1/audit/logs` | Get all audit logs (admin only) |
-| `GET` | `/api/v1/health` | Health check (DB + K8s) |
+| `GET` | `/api/v1/health` | Health check (DB + K8s + concurrency stats) |
+| `GET` | `/api/v1/health/live` | Liveness probe (always 200 if process alive) |
+| `GET` | `/api/v1/health/ready` | Readiness probe (503 during shutdown) |
 | `GET` | `/api/v1/metrics` | Prometheus metrics |
 | `GET` | `/api/v1/metrics/json` | Metrics in JSON format |
 
@@ -661,17 +669,368 @@ The Helm chart uses **values file separation** to support both local development
 
 | File | Purpose | Key Differences |
 |------|---------|-----------------|
-| `values.yaml` | Base defaults | Shared configuration |
-| `values-local.yaml` | Docker Desktop | `imagePullPolicy: Never`, `.localhost` domains, NodePort services, relaxed resource limits |
-| `values-vps.yaml` | K3s / production | Real domains, Traefik ingress, cert-manager TLS, persistent storage, production resource requests |
+| `values.yaml` | Base defaults | Shared configuration — engine, RBAC, resource quota, limit range |
+| `values-local.yaml` | Docker Desktop | `imagePullPolicy: Never`, `.localhost` domains, hostpath storage, relaxed limits |
+| `values-vps.yaml` | K3s / production | Real domains, Traefik ingress, cert-manager TLS, `local-path` storage, production resources |
 
-### Migration Path
+### Values File Difference Matrix
 
-1. **Local development** → `HELM_VALUES_FILE=values-local.yaml` (default)
-2. **VPS staging** → `HELM_VALUES_FILE=values-vps.yaml` with staging domain
-3. **Production** → Same `values-vps.yaml` with production domain, TLS, and DNS wildcard
+Every deviation from the base `values.yaml` is documented here. The backend selects a values file via the `HELM_VALUES_FILE` environment variable — no code changes required.
 
-The backend automatically selects the values file based on `HELM_VALUES_FILE` env var. No code changes required — only infrastructure configuration.
+| Configuration | `values.yaml` (base) | `values-local.yaml` | `values-vps.yaml` | Rationale |
+|--------------|----------------------|---------------------|-------------------|-----------|
+| **Ingress class** | `nginx` | `nginx` | `traefik` | k3s ships Traefik; Docker Desktop uses nginx-ingress |
+| **Host suffix** | `.localhost` | `.localhost` | `.yourdomain.com` | Wildcard DNS required on VPS |
+| **TLS** | `false` | `false` | `true` | cert-manager + Let's Encrypt on VPS |
+| **TLS annotations** | — | — | `cert-manager.io/cluster-issuer: letsencrypt-prod` | Automatic certificate provisioning |
+| **Network policy** | `true` | `false` | `true` | Docker Desktop CNI may not support NetworkPolicy |
+| **Storage class** | `""` (default) | `hostpath` | `local-path` | k3s local-path provisioner vs Docker Desktop hostpath |
+| **MariaDB memory** | 256Mi limit | 256Mi limit | 512Mi limit | VPS has more RAM for production workloads |
+| **WordPress CPU** | 500m limit | 300m limit | 1 CPU limit | Production WooCommerce needs more CPU |
+| **WordPress memory** | 512Mi limit | 384Mi limit | 1Gi limit | Production WP + plugins need headroom |
+| **MariaDB disk** | 2Gi | 1Gi | 5Gi | Real stores accumulate product/order data |
+| **WordPress disk** | 2Gi | 1Gi | 5Gi | Media uploads need more space |
+| **Medusa pull policy** | `Never` | `Never` | `IfNotPresent` | local: prebuilt image; VPS: pulled from registry |
+| **Medusa image tag** | `local` | `local` | `latest` | VPS uses registry-pushed images |
+| **Quota storage** | 10Gi | 5Gi | 20Gi | VPS stores need more persistent storage |
+
+### Environment Profiles
+
+| Profile | `NODE_ENV` | `HELM_VALUES_FILE` | `STORE_DOMAIN_SUFFIX` | Purpose |
+|---------|-----------|--------------------|-----------------------|---------|
+| **Development** | `development` | `values-local.yaml` | `.localhost` | Local feature development |
+| **Test** | `test` | `values-local.yaml` | `.localhost` | Automated testing (Jest) |
+| **Staging** | `staging` | `values-vps.yaml` | `.staging.yourdomain.com` | Pre-production validation |
+| **Production** | `production` | `values-vps.yaml` | `.yourdomain.com` | Live deployment |
+
+### Secrets Strategy
+
+The platform handles secrets at three levels:
+
+**1. Control Plane Secrets (Backend `.env`)**
+
+| Secret | Local | VPS / Production |
+|--------|-------|-----------------|
+| `JWT_SECRET` | `dev-jwt-secret-change-in-production` (default) | **Required** — generate with `openssl rand -base64 48` |
+| `DATABASE_URL` | `postgresql://mtec:mtec_secret@localhost:5433/...` | Managed PostgreSQL or systemd-protected local PG |
+| Validation | Allows default in dev | `envValidator.js` **hard-fails** if JWT_SECRET is the default |
+
+```bash
+# Generate production JWT secret
+export JWT_SECRET=$(openssl rand -base64 48)
+```
+
+**2. Per-Store Secrets (Helm Kubernetes Secrets)**
+
+Each store gets engine-specific Kubernetes Secrets created by Helm templates:
+
+| Secret | Engine | Contains | Template |
+|--------|--------|----------|----------|
+| `<store>-mariadb-secret` | WooCommerce | `root-password`, `user-password` | `mariadb/secret.yaml` |
+| `<store>-wordpress-secret` | WooCommerce | `admin-password`, `admin-email` | `wordpress/secret.yaml` |
+| `<store>-medusa-secret` | MedusaJS | `admin-password`, `jwt-secret`, `cookie-secret` | `medusa/secret.yaml` |
+| `<store>-medusa-pg-secret` | MedusaJS | `postgres-password` | `medusa/postgresql-secret.yaml` |
+
+**Production hardening**: Override defaults via `--set` flags during `helm install`:
+
+```bash
+helm upgrade --install store-abc ./helm/ecommerce-store \
+  --namespace store-abc \
+  -f ./helm/ecommerce-store/values-vps.yaml \
+  --set storeId=store-abc \
+  --set engine=woocommerce \
+  --set mariadb.rootPassword=$(openssl rand -base64 24) \
+  --set mariadb.password=$(openssl rand -base64 24) \
+  --set wordpress.admin.password=$(openssl rand -base64 24)
+```
+
+**3. Infrastructure Secrets**
+
+| Secret | Where | Management |
+|--------|-------|------------|
+| KUBECONFIG | Backend host | File permission `600`, path in `.env` |
+| TLS certificates | cert-manager Secrets | Automated renewal via Let's Encrypt |
+| Docker registry credentials | `imagePullSecrets` | `kubectl create secret docker-registry` |
+
+**Rotation policy**: JWT_SECRET rotation requires all active tokens to be re-issued. Store secrets can be rotated by running `helm upgrade` with new `--set` values — pods will restart and pick up new Secret mounts.
+
+## Upgrade & Rollback Strategy
+
+### Overview
+
+The platform uses Helm 3's built-in revision tracking for safe upgrades and instant rollbacks of provisioned store releases. Every `helm upgrade` creates a new revision; rolling back restores the exact previous state.
+
+### Upgrade Workflow
+
+```
+                    ┌─────────────────────────────┐
+                    │  1. Pre-flight              │
+                    │  helm lint + template render │
+                    └──────────┬──────────────────┘
+                               │
+                    ┌──────────▼──────────────────┐
+                    │  2. Diff Preview (optional)  │
+                    │  helm diff upgrade           │
+                    └──────────┬──────────────────┘
+                               │
+                    ┌──────────▼──────────────────┐
+                    │  3. Upgrade                  │
+                    │  helm upgrade --install      │
+                    │  --atomic --cleanup-on-fail  │
+                    │  --wait --timeout 10m        │
+                    └──────────┬──────────────────┘
+                               │
+                    ┌──────────▼──────────────────┐
+                    │  4. Post-upgrade Verify     │
+                    │  Pod health, PVC, Ingress   │
+                    └──────────┬──────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │ PASS                            │ FAIL
+              ▼                                 ▼
+    ┌──────────────┐                  ┌──────────────────┐
+    │  Done ✓      │                  │  helm rollback   │
+    │  New revision│                  │  Restore prev.   │
+    └──────────────┘                  └──────────────────┘
+```
+
+### Using the Upgrade Script
+
+A helper script is provided at `scripts/helm-upgrade.sh`:
+
+```bash
+# 1. Preview what will change (dry-run)
+./scripts/helm-upgrade.sh diff store-abc12345 store-abc12345 values-vps.yaml
+
+# 2. Perform the upgrade (with --atomic: auto-rollback on failure)
+./scripts/helm-upgrade.sh upgrade store-abc12345 store-abc12345 values-vps.yaml
+
+# 3. Verify the upgrade succeeded
+./scripts/helm-upgrade.sh verify store-abc12345 store-abc12345
+
+# 4. If verification fails, roll back immediately
+./scripts/helm-upgrade.sh rollback store-abc12345 store-abc12345
+
+# 5. View revision history
+./scripts/helm-upgrade.sh history store-abc12345 store-abc12345
+```
+
+### Manual Upgrade Commands
+
+```bash
+# Upgrade a WooCommerce store to new resource limits
+helm upgrade store-abc12345 ./helm/ecommerce-store \
+  --namespace store-abc12345 \
+  -f ./helm/ecommerce-store/values-vps.yaml \
+  --set engine=woocommerce \
+  --set storeId=store-abc12345 \
+  --set wordpress.resources.limits.memory=2Gi \
+  --atomic \
+  --wait \
+  --timeout 10m
+
+# Rollback to the previous revision
+helm rollback store-abc12345 0 --namespace store-abc12345 --wait
+
+# Rollback to a specific revision
+helm rollback store-abc12345 2 --namespace store-abc12345 --wait
+```
+
+### Chart Version Bumping
+
+When modifying the Helm chart:
+
+```bash
+# 1. Update Chart.yaml version (SemVer)
+#    Increment patch (1.0.0 → 1.0.1) for fixes
+#    Increment minor (1.0.0 → 1.1.0) for new features
+#    Increment major (1.0.0 → 2.0.0) for breaking changes
+
+# 2. Validate the chart
+helm lint ./helm/ecommerce-store
+helm template test ./helm/ecommerce-store \
+  --set engine=woocommerce --set storeId=test \
+  -f ./helm/ecommerce-store/values-local.yaml --validate
+
+# 3. Upgrade existing stores to new chart version
+for NS in $(kubectl get ns -l mt-ecommerce/store-id -o name | cut -d/ -f2); do
+  echo "Upgrading $NS..."
+  ./scripts/helm-upgrade.sh upgrade "$NS" "$NS" values-vps.yaml
+done
+```
+
+### Rollback Verification
+
+After a rollback, confirm these items:
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| Release status | `helm status <release> -n <ns>` | `STATUS: deployed` |
+| Pods healthy | `kubectl get pods -n <ns>` | All `Running` or `Completed` |
+| PVCs bound | `kubectl get pvc -n <ns>` | All `Bound` |
+| Ingress host | `kubectl get ingress -n <ns>` | Correct hostname |
+| Store reachable | `curl -sI http://<store-host>` | HTTP 200 or 301 |
+| DB intact | `kubectl exec <db-pod> -n <ns> -- ...` | Tables/data preserved (PVCs survive rollback) |
+
+> **Important**: PersistentVolumeClaims are **not** deleted during rollback. Data in MariaDB and PostgreSQL is preserved across upgrades and rollbacks. Only the Deployment/StatefulSet spec is reverted.
+
+### Upgrade Safety Guarantees
+
+| Guarantee | Mechanism |
+|-----------|-----------|
+| **Atomic upgrades** | `--atomic` flag: if any resource fails to become healthy, Helm auto-rolls back the entire release |
+| **Wait for readiness** | `--wait` flag: Helm blocks until all pods are Ready |
+| **Cleanup on failure** | `--cleanup-on-fail` flag: removes newly created resources on failed upgrade |
+| **Data preservation** | PVCs use `Retain` delete policy by default — data survives release deletion |
+| **Revision history** | Helm stores all revisions — roll back to any previous state |
+| **Idempotent installs** | `helm upgrade --install` creates if missing, upgrades if exists |
+
+## Deployment Verification Checklist
+
+A verification script is provided at `scripts/verify-deployment.sh`. Run it against any environment:
+
+```bash
+# Local development
+./scripts/verify-deployment.sh
+
+# VPS / production
+./scripts/verify-deployment.sh https://api.yourdomain.com
+```
+
+### Manual Checklist
+
+Use this checklist after any deployment or environment change:
+
+| # | Check | Local | VPS | How to Verify |
+|---|-------|-------|-----|---------------|
+| 1 | Backend health endpoint | ✓ | ✓ | `curl http://<host>/api/v1/health` → 200 |
+| 2 | PostgreSQL connected | ✓ | ✓ | Health response: `database.status = "healthy"` |
+| 3 | Kubernetes connected | ✓ | ✓ | Health response: `kubernetes.status = "healthy"` |
+| 4 | Liveness probe | ✓ | ✓ | `curl http://<host>/api/v1/health/live` → 200 |
+| 5 | Readiness probe | ✓ | ✓ | `curl http://<host>/api/v1/health/ready` → 200 |
+| 6 | Concurrency stats | ✓ | ✓ | Health response includes `concurrency.maxConcurrent` |
+| 7 | JWT auth works | ✓ | ✓ | Login returns token, protected routes accept Bearer |
+| 8 | Store creation | ✓ | ✓ | `POST /stores` returns 202, store ID created |
+| 9 | Helm install succeeds | ✓ | ✓ | Store transitions to `provisioning` then `ready` |
+| 10 | Ingress reachable | ✓ | ✓ | `curl http://store-<id>.<suffix>` returns content |
+| 11 | Store deletion | ✓ | ✓ | `DELETE /stores/:id` removes namespace + release |
+| 12 | Metrics endpoint | ✓ | ✓ | `GET /metrics` with admin JWT returns Prometheus text |
+| 13 | Security headers | ✓ | ✓ | `curl -I` shows HSTS, CSP, X-Frame-Options |
+| 14 | Helm chart lints | ✓ | ✓ | `helm lint ./helm/ecommerce-store` passes |
+| 15 | Chart templates render | ✓ | ✓ | `helm template` succeeds for both engines |
+| 16 | NetworkPolicy applied | — | ✓ | `kubectl get networkpolicy -n store-*` |
+| 17 | ResourceQuota enforced | ✓ | ✓ | `kubectl get resourcequota -n store-*` |
+| 18 | TLS certificate issued | — | ✓ | `kubectl get certificate -n store-*` |
+| 19 | Graceful shutdown | ✓ | ✓ | Send SIGTERM → logs show drain sequence |
+| 20 | Crash recovery | ✓ | ✓ | Kill backend during provisioning → restart marks stuck stores failed |
+
+## Operational Notes
+
+### Process Management (VPS)
+
+```bash
+# Install and configure pm2
+npm install -g pm2
+
+# Start the backend with restart on crash
+pm2 start src/index.js --name mtec-backend \
+  --max-memory-restart 512M \
+  --kill-timeout 20000 \
+  --wait-ready \
+  --listen-timeout 10000
+
+# Save the process list for auto-start on reboot
+pm2 save
+pm2 startup   # Generates a systemd service
+
+# View logs
+pm2 logs mtec-backend --lines 100
+
+# Zero-downtime restart (if behind a load balancer)
+pm2 reload mtec-backend
+```
+
+### Nginx Reverse Proxy (VPS Frontend)
+
+```nginx
+# /etc/nginx/sites-available/mtec
+server {
+    listen 80;
+    server_name admin.yourdomain.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name admin.yourdomain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/admin.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.yourdomain.com/privkey.pem;
+
+    # Frontend SPA (React build)
+    root /var/www/mtec-frontend/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API reverse proxy
+    location /api/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;  # Long timeout for provisioning
+    }
+}
+```
+
+### Monitoring & Alerting
+
+| Metric | Alert Threshold | Action |
+|--------|----------------|--------|
+| `http_requests_total{status_code=~"5.."}` | > 10 in 5 min | Investigate backend errors |
+| `provisioning_queue_depth` | > 5 sustained | Scale up or increase `PROVISIONING_MAX_CONCURRENT` |
+| `provisioning_rejections_total` | Any increase | Queue is saturated — review concurrent load |
+| `store_provisioning_duration_ms` | > 300000 (5 min) | Investigate slow Helm installs |
+| `process_uptime_seconds` | Resets frequently | Backend crashing — check logs |
+| PostgreSQL connections | > 80% of `DB_POOL_MAX` | Increase pool or add PgBouncer |
+| Disk usage (VPS host) | > 80% | Clean old PVCs or expand volume |
+
+### Backup & Recovery
+
+```bash
+# Backup control plane database
+pg_dump -U mtec mtec_control_plane > backup-$(date +%Y%m%d).sql
+
+# Backup a store's MariaDB (WooCommerce)
+kubectl exec -n store-abc $(kubectl get pod -n store-abc -l app.kubernetes.io/name=mariadb -o name) \
+  -- mysqldump -u root -p$ROOT_PASSWORD wordpress > store-abc-backup.sql
+
+# Backup a store's PostgreSQL (MedusaJS)
+kubectl exec -n store-xyz $(kubectl get pod -n store-xyz -l app.kubernetes.io/name=postgresql -o name) \
+  -- pg_dump -U medusa medusa > store-xyz-backup.sql
+
+# Restore control plane
+psql -U mtec mtec_control_plane < backup-20260215.sql
+```
+
+### Log Aggregation (Production)
+
+In production, pipe Winston JSON logs to a centralized log system:
+
+```bash
+# pm2 → journald → Promtail/Loki
+pm2 start src/index.js --name mtec-backend --log-type json
+
+# Or direct to file for Filebeat/Fluentd ingestion
+pm2 start src/index.js --name mtec-backend \
+  --output /var/log/mtec/out.log \
+  --error /var/log/mtec/err.log \
+  --merge-logs
+```
 
 ## Known Limitations
 
@@ -683,6 +1042,7 @@ These items are documented and accepted trade-offs for the current scope:
 | **F11** | Creation cooldown and rate limiter use in-memory `Map`s | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed store. The provisioning semaphore is similarly in-process. See [Horizontal Scaling Strategy](#horizontal-scaling-strategy) for the migration path. |
 | ~~**F12**~~ | ~~`requestId` not propagated to async provisioning logs~~ | **Resolved** — `correlationId` is now propagated from the HTTP request through all async provisioning steps, including per-step timing logs. |
 | **F13** | Provisioning semaphore is in-process only | The semaphore limits concurrency within a single Node.js process. Multi-instance deployments would need PostgreSQL advisory locks or a distributed semaphore (Redis/etcd). Documented in [Horizontal Scaling Strategy](#horizontal-scaling-strategy). |
+| **F14** | No automated VPS integration tests | Deployment verification (`scripts/verify-deployment.sh`) is manual. A CI stage with k3s-in-Docker (k3d) could automate VPS-like testing but is not yet implemented. |
 
 ## MedusaJS Storefront SPA
 
