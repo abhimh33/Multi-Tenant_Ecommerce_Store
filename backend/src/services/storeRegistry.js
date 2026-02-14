@@ -13,7 +13,7 @@ const STORE_COLUMNS = `
   id, name, engine, status, namespace, helm_release,
   storefront_url, admin_url, failure_reason, retry_count,
   provisioning_started_at, provisioning_completed_at, provisioning_duration_ms,
-  owner_id, theme, created_at, updated_at, deleted_at
+  owner_id, theme, admin_credentials, created_at, updated_at, deleted_at
 `;
 
 /**
@@ -142,12 +142,14 @@ async function update(id, updates, options = {}) {
     provisioningDurationMs: 'provisioning_duration_ms',
     deletedAt: 'deleted_at',
     helmRelease: 'helm_release',
+    adminCredentials: 'admin_credentials',
   };
 
   for (const [key, column] of Object.entries(allowedFields)) {
     if (updates[key] !== undefined) {
       setClauses.push(`${column} = $${paramIndex++}`);
-      params.push(updates[key]);
+      // JSONB columns need explicit serialization
+      params.push(column === 'admin_credentials' ? JSON.stringify(updates[key]) : updates[key]);
     }
   }
 
@@ -235,6 +237,7 @@ function normalizeRow(row) {
     provisioningDurationMs: row.provisioning_duration_ms,
     ownerId: row.owner_id,
     theme: row.theme || null,
+    adminCredentials: row.admin_credentials || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,

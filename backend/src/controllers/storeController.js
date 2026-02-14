@@ -188,6 +188,7 @@ function formatStoreResponse(store) {
       admin: store.adminUrl || null,
     },
     namespace: store.namespace,
+    adminCredentials: store.adminCredentials || null,
     failureReason: store.failureReason || null,
     retryCount: store.retryCount,
     provisioningDurationMs: store.provisioningDurationMs || null,

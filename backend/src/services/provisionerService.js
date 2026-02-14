@@ -11,6 +11,7 @@ const { STATES, assertTransition, canDelete, canRetry } = require('../models/sto
 const { generateStoreId, storeIdToNamespace, storeIdToHelmRelease } = require('../utils/idGenerator');
 const { retryWithBackoff } = require('../utils/retry');
 const storeSetupService = require('./storeSetupService');
+const userService = require('./userService');
 const {
   NotFoundError,
   ConflictError,
@@ -209,16 +210,29 @@ async function provisionStoreAsync(storeId) {
     } else if (store.engine === 'medusa') {
       const jwtSecret = crypto.randomBytes(32).toString('base64url');
       const cookieSecret = crypto.randomBytes(32).toString('base64url');
+
+      // Resolve the tenant user's email so the Medusa admin is synced
+      let tenantEmail = 'admin@medusa.local';
+      try {
+        const tenantUser = await userService.findById(store.ownerId);
+        if (tenantUser && tenantUser.email) {
+          tenantEmail = tenantUser.email;
+          logger.info('Syncing tenant email as Medusa admin', { storeId, email: tenantEmail });
+        }
+      } catch (_lookupErr) {
+        logger.warn('Could not resolve tenant user, using default email', { storeId, ownerId: store.ownerId });
+      }
+
       credentials = {
         adminUsername: 'admin',
         adminPassword,
-        adminEmail: 'admin@medusa.local',
+        adminEmail: tenantEmail,
         dbPassword,
         jwtSecret,
         cookieSecret,
       };
       setValues = {
-        'medusa.admin.email': 'admin@medusa.local',
+        'medusa.admin.email': tenantEmail,
         'medusa.admin.password': adminPassword,
         'medusa.jwtSecret': jwtSecret,
         'medusa.cookieSecret': cookieSecret,
@@ -313,6 +327,7 @@ async function provisionStoreAsync(storeId) {
           namespace: store.namespace,
           storeId,
           credentials,
+          storeName: store.name,
         });
 
         await auditService.log({
@@ -345,10 +360,18 @@ async function provisionStoreAsync(storeId) {
     const now = new Date();
     const provisioningDurationMs = Date.now() - new Date(store.provisioningStartedAt).getTime();
 
+    // Persist admin credentials so tenant can access them
+    const adminCredentialsPayload = store.engine === 'medusa'
+      ? { email: credentials.adminEmail, password: credentials.adminPassword }
+      : store.engine === 'woocommerce'
+        ? { username: credentials.adminUsername, password: credentials.adminPassword }
+        : {};
+
     store = await storeRegistry.update(storeId, {
       status: STATES.READY,
       storefrontUrl,
       adminUrl,
+      adminCredentials: adminCredentialsPayload,
       provisioningCompletedAt: now.toISOString(),
       provisioningDurationMs,
     });

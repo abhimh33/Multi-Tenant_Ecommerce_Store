@@ -26,6 +26,7 @@ import {
   Globe,
   Box,
   AlertCircle,
+  KeyRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDate, formatDuration } from '../lib/utils';
@@ -257,6 +258,38 @@ export default function StoreDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Admin Credentials */}
+      {store.adminCredentials && (store.adminCredentials.email || store.adminCredentials.username) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              Admin Credentials
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {store.adminCredentials.email && (
+              <InfoRow label="Email">
+                <code className="text-sm bg-muted px-2 py-0.5 rounded">{store.adminCredentials.email}</code>
+              </InfoRow>
+            )}
+            {store.adminCredentials.username && (
+              <InfoRow label="Username">
+                <code className="text-sm bg-muted px-2 py-0.5 rounded">{store.adminCredentials.username}</code>
+              </InfoRow>
+            )}
+            {store.adminCredentials.password && (
+              <InfoRow label="Password">
+                <code className="text-sm bg-muted px-2 py-0.5 rounded">{store.adminCredentials.password}</code>
+              </InfoRow>
+            )}
+            <p className="text-xs text-muted-foreground mt-2">
+              Use these credentials to log into the store admin panel.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Failure reason */}
       {store.failureReason && (

@@ -526,17 +526,35 @@ async function medusaAdminApi({ namespace, podName, method, path, body, token, t
  *
  * Seeds: region, shipping options, collections, products.
  */
-async function seedMedusaDemoData({ namespace, podName, storeId, adminEmail, adminPassword }) {
+async function seedMedusaDemoData({ namespace, podName, storeId, adminEmail, adminPassword, storeName }) {
   logger.info('Seeding Medusa demo data', { storeId });
   const results = {};
 
-  const seedCmd = buildSeedScript(adminEmail, adminPassword);
+  const seedScript = buildSeedScript(adminEmail, adminPassword, storeName || 'Demo Store');
+
+  // Write the seed script to a temp file inside the container, then execute it.
+  // This avoids fragile single-quote escaping with `node -e '...'`.
+  const writeCmd = `cat > /tmp/seed.js << 'SEEDEOF'\n${seedScript}\nSEEDEOF`;
   
+  try {
+    await kubectlExecMedusa({
+      namespace,
+      podName,
+      command: writeCmd,
+      timeoutMs: 15000,
+    });
+    logger.debug('Seed script written to /tmp/seed.js', { storeId });
+  } catch (err) {
+    logger.warn('Failed to write seed script file', { storeId, error: err.message });
+    results.status = `write_failed: ${err.message}`;
+    return results;
+  }
+
   try {
     const seedResult = await kubectlExecMedusa({
       namespace,
       podName,
-      command: seedCmd,
+      command: 'node /tmp/seed.js',
       timeoutMs: 120000, // 2 min — lots of API calls
     });
     
@@ -554,6 +572,11 @@ async function seedMedusaDemoData({ namespace, podName, storeId, adminEmail, adm
   } catch (err) {
     logger.warn('Seed script failed', { storeId, error: err.message });
     results.status = `script_failed: ${err.message}`;
+  } finally {
+    // Clean up temp file
+    try {
+      await kubectlExecMedusa({ namespace, podName, command: 'rm -f /tmp/seed.js', timeoutMs: 5000 });
+    } catch { /* ignore cleanup errors */ }
   }
 
   return results;
@@ -561,11 +584,20 @@ async function seedMedusaDemoData({ namespace, podName, storeId, adminEmail, adm
 
 /**
  * Build a Node.js script that seeds demo data via the Medusa Admin API.
- * The script runs inside the Medusa container (node:alpine).
+ * The script runs inside the Medusa container (node:alpine) as a file.
  * Uses JWT Bearer auth via /admin/auth/token endpoint.
+ * @param {string} email Admin email
+ * @param {string} password Admin password
+ * @param {string} storeName Display name for the store
+ * @returns {string} Raw Node.js script content (NOT wrapped in node -e)
  */
-function buildSeedScript(email, password) {
-  const nodeScript = `
+function buildSeedScript(email, password, storeName) {
+  // Escape values for safe embedding in the script
+  const safeEmail = email.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const safePassword = password.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const safeStoreName = (storeName || 'Demo Store').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+  return `
 const http = require('http');
 function req(method, path, body, token) {
   return new Promise((resolve, reject) => {
@@ -588,8 +620,11 @@ function req(method, path, body, token) {
   });
 }
 async function seed() {
-  const tokenRes = await req('POST', '/admin/auth/token', { email: '${email}', password: '${password}' });
-  if (tokenRes.status !== 200) { console.log('SEED_AUTH:failed ' + tokenRes.status); return; }
+  console.log('SEED_START:' + new Date().toISOString());
+
+  // Authenticate
+  const tokenRes = await req('POST', '/admin/auth/token', { email: "${safeEmail}", password: "${safePassword}" });
+  if (tokenRes.status !== 200) { console.log('SEED_AUTH:failed ' + tokenRes.status + ' ' + JSON.stringify(tokenRes.data)); return; }
   const tk = tokenRes.data.access_token;
   console.log('SEED_AUTH:ok');
 
@@ -628,6 +663,17 @@ async function seed() {
   const existingProdsRes = await req('GET', '/admin/products?limit=1', null, tk);
   if (existingProdsRes.data.count && existingProdsRes.data.count >= 8) {
     console.log('SEED_PRODUCTS:already_seeded ' + existingProdsRes.data.count);
+    // Still ensure all products are in the sales channel
+    const scRes2 = await req('GET', '/admin/sales-channels', null, tk);
+    const sc2 = scRes2.data.sales_channels && scRes2.data.sales_channels[0] ? scRes2.data.sales_channels[0].id : null;
+    if (sc2) {
+      const allP = await req('GET', '/admin/products?limit=100&fields=id', null, tk);
+      const ids = (allP.data.products || []).map(x => ({ id: x.id }));
+      if (ids.length > 0) {
+        await req('POST', '/admin/sales-channels/' + sc2 + '/products/batch', { product_ids: ids }, tk);
+        console.log('SEED_SALES_CHANNEL:verified ' + ids.length + ' products');
+      }
+    }
     console.log('SEED_COMPLETE:ok');
     return;
   }
@@ -652,7 +698,7 @@ async function seed() {
   for (const p of products) {
     const pr = await req('POST', '/admin/products', p, tk);
     if (pr.data && pr.data.product) { created++; createdIds.push(pr.data.product.id); }
-    else console.log('SEED_PRODUCT_ERR:' + p.handle + ' s=' + pr.status);
+    else console.log('SEED_PRODUCT_ERR:' + p.handle + ' s=' + pr.status + ' ' + JSON.stringify(pr.data).substring(0, 200));
   }
   console.log('SEED_PRODUCTS:created ' + created);
 
@@ -661,18 +707,19 @@ async function seed() {
     const allProds = await req('GET', '/admin/products?limit=100&fields=id', null, tk);
     const allIds = (allProds.data.products || []).map(x => ({ id: x.id }));
     if (allIds.length > 0) {
-      await req('POST', '/admin/sales-channels/' + defaultSC + '/products/batch', { product_ids: allIds }, tk);
-      console.log('SEED_SALES_CHANNEL:added ' + allIds.length + ' products');
+      const scAddRes = await req('POST', '/admin/sales-channels/' + defaultSC + '/products/batch', { product_ids: allIds }, tk);
+      console.log('SEED_SALES_CHANNEL:added ' + allIds.length + ' products (status=' + scAddRes.status + ')');
     }
+  } else {
+    console.log('SEED_SALES_CHANNEL:WARNING no default sales channel found');
   }
 
-  await req('POST', '/admin/store', { name: 'Demo Store', default_currency_code: 'usd' }, tk);
+  // Set store name
+  await req('POST', '/admin/store', { name: "${safeStoreName}", default_currency_code: 'usd' }, tk);
   console.log('SEED_COMPLETE:ok');
 }
-seed().catch(e => console.log('SEED_FATAL:' + e.message));
+seed().catch(e => { console.log('SEED_FATAL:' + e.message); process.exit(1); });
 `.trim();
-
-  return `node -e '${nodeScript.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -690,7 +737,7 @@ seed().catch(e => console.log('SEED_FATAL:' + e.message));
  * @param {Object} params.credentials
  * @returns {Promise<Object>} Setup results
  */
-async function setupMedusa({ namespace, storeId, credentials }) {
+async function setupMedusa({ namespace, storeId, credentials, storeName }) {
   logger.info('Starting MedusaJS setup', { storeId, namespace });
   const results = {};
 
@@ -753,7 +800,7 @@ async function setupMedusa({ namespace, storeId, credentials }) {
   // Step 4: Seed demo data via Admin API
   try {
     results.seedData = await seedMedusaDemoData({
-      namespace, podName, storeId, adminEmail, adminPassword,
+      namespace, podName, storeId, adminEmail, adminPassword, storeName,
     });
     logger.info('Medusa demo data seeded', { storeId });
   } catch (err) {
