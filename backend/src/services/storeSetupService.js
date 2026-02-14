@@ -643,13 +643,28 @@ async function seed() {
     { title: 'Portable Power Bank', handle: 'portable-power-bank', description: '20000mAh portable charger with USB-C fast charging.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1609091839311-d5365f9ff1c5?w=600&q=80', collection_id: colIds['new-arrivals'], options: [{ title: 'Capacity' }], variants: [{ title: '10000mAh', prices: [{ currency_code: 'usd', amount: 3499 }], options: [{ value: '10000mAh' }], inventory_quantity: 50, manage_inventory: false }, { title: '20000mAh', prices: [{ currency_code: 'usd', amount: 4999 }], options: [{ value: '20000mAh' }], inventory_quantity: 50, manage_inventory: false }] },
   ];
 
+  // Get default sales channel — products must be added to it for the Store API to return them
+  const scRes = await req('GET', '/admin/sales-channels', null, tk);
+  const defaultSC = scRes.data.sales_channels && scRes.data.sales_channels[0] ? scRes.data.sales_channels[0].id : null;
+
   let created = 0;
+  const createdIds = [];
   for (const p of products) {
     const pr = await req('POST', '/admin/products', p, tk);
-    if (pr.data && pr.data.product) created++;
+    if (pr.data && pr.data.product) { created++; createdIds.push(pr.data.product.id); }
     else console.log('SEED_PRODUCT_ERR:' + p.handle + ' s=' + pr.status);
   }
   console.log('SEED_PRODUCTS:created ' + created);
+
+  // Add all products (new and existing) to the default sales channel
+  if (defaultSC) {
+    const allProds = await req('GET', '/admin/products?limit=100&fields=id', null, tk);
+    const allIds = (allProds.data.products || []).map(x => ({ id: x.id }));
+    if (allIds.length > 0) {
+      await req('POST', '/admin/sales-channels/' + defaultSC + '/products/batch', { product_ids: allIds }, tk);
+      console.log('SEED_SALES_CHANNEL:added ' + allIds.length + ' products');
+    }
+  }
 
   await req('POST', '/admin/store', { name: 'Demo Store', default_currency_code: 'usd' }, tk);
   console.log('SEED_COMPLETE:ok');
@@ -684,25 +699,35 @@ async function setupMedusa({ namespace, storeId, credentials }) {
   logger.info('Found Medusa pod', { storeId, podName });
   results.podName = podName;
 
-  // Step 2: Verify health endpoint
-  try {
-    const healthResult = await kubectlExecMedusa({
-      namespace,
-      podName,
-      command: 'wget -qO- http://localhost:9000/health 2>&1 || curl -sf http://localhost:9000/health 2>&1 || echo "HEALTH_CHECK_FAILED"',
-      timeoutMs: 30000,
-    });
+  // Step 2: Wait for Medusa API to be fully ready (retry health check)
+  let healthOk = false;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      const healthResult = await kubectlExecMedusa({
+        namespace,
+        podName,
+        command: 'wget -qO- http://localhost:9000/health 2>&1 || echo "HEALTH_CHECK_FAILED"',
+        timeoutMs: 30000,
+      });
 
-    if (healthResult.stdout.includes('HEALTH_CHECK_FAILED')) {
-      logger.warn('Medusa health check returned failure', { storeId });
-      results.healthCheck = 'warning: health endpoint not responding yet';
-    } else {
-      logger.info('Medusa health check passed', { storeId });
-      results.healthCheck = 'ok';
+      if (!healthResult.stdout.includes('HEALTH_CHECK_FAILED')) {
+        logger.info('Medusa health check passed', { storeId, attempt });
+        results.healthCheck = 'ok';
+        healthOk = true;
+        break;
+      }
+    } catch (err) {
+      logger.debug('Medusa health check attempt failed', { storeId, attempt, error: err.message });
     }
-  } catch (err) {
-    logger.warn('Medusa health check failed', { storeId, error: err.message });
-    results.healthCheck = `failed: ${err.message}`;
+    // Wait before retrying (Medusa can take 15-30s to boot)
+    if (attempt < 6) {
+      logger.info('Waiting for Medusa API...', { storeId, attempt, nextRetryMs: 10000 });
+      await new Promise(r => setTimeout(r, 10000));
+    }
+  }
+  if (!healthOk) {
+    logger.warn('Medusa health check never passed after retries', { storeId });
+    results.healthCheck = 'warning: health endpoint not responding after retries';
   }
 
   // Step 3: Create admin user via medusa CLI (idempotent — will skip if user exists)
@@ -721,6 +746,9 @@ async function setupMedusa({ namespace, storeId, credentials }) {
     logger.warn('Medusa admin user creation failed', { storeId, error: err.message });
     results.adminUser = `failed: ${err.message}`;
   }
+
+  // Brief pause after admin user creation — Medusa needs a moment to settle
+  await new Promise(r => setTimeout(r, 5000));
 
   // Step 4: Seed demo data via Admin API
   try {
