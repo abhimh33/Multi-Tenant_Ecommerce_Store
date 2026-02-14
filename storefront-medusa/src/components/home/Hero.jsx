@@ -46,11 +46,15 @@ export default function Hero() {
           {/* CTA */}
           <div className="mt-8 flex flex-col sm:flex-row gap-4 animate-fade-up"
                style={{ animationDelay: '0.3s' }}>
-            <Link to="/products" className="btn-primary bg-white text-surface-900 hover:bg-surface-100">
+            <Link to="/products" className="inline-flex items-center justify-center gap-2 rounded-lg px-6 py-3
+                       text-sm font-semibold transition-all duration-200 active:scale-[0.98]
+                       bg-white text-surface-900 hover:bg-white/80 active:bg-white/60">
               Shop Now
               <ArrowRight className="h-4 w-4" />
             </Link>
-            <Link to="/collections" className="btn-secondary border-white/20 text-white hover:bg-white/10 hover:border-white/30">
+            <Link to="/collections" className="inline-flex items-center justify-center gap-2 rounded-lg px-6 py-3
+                       text-sm font-semibold transition-all duration-200 active:scale-[0.98]
+                       bg-transparent border border-white/30 text-white hover:bg-white/10 active:bg-white/20">
               Browse Collections
             </Link>
           </div>

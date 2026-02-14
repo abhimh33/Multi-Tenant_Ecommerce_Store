@@ -3,8 +3,10 @@
 const userService = require('../services/userService');
 const storeRegistry = require('../services/storeRegistry');
 const storeSetupService = require('../services/storeSetupService');
+const auditService = require('../services/auditService');
 const { recordFailedAttempt, clearLockout } = require('../middleware/loginLimiter');
 const logger = require('../utils/logger').child('auth-controller');
+const { securityEvents } = require('../utils/metrics');
 
 async function register(req, res, next) {
   try {
@@ -31,6 +33,16 @@ async function register(req, res, next) {
     const token = userService.generateToken(user);
 
     logger.info('User registered', { userId: user.id, email: user.email, role });
+
+    // Audit security event
+    securityEvents.inc({ event_type: 'registration' });
+    auditService.logSecurityEvent({
+      action: 'registration',
+      email: user.email,
+      ip: req.ip,
+      message: `New user registered: ${user.email} (role: ${role})`,
+      metadata: { userId: user.id, role },
+    }).catch(() => {}); // non-blocking
 
     res.status(201).json({
       requestId: req.requestId,
@@ -67,6 +79,16 @@ async function login(req, res, next) {
 
     if (!user) {
       recordFailedAttempt(email);
+
+      // Audit failed login
+      securityEvents.inc({ event_type: 'login_failed' });
+      auditService.logSecurityEvent({
+        action: 'login_failed',
+        email,
+        ip: req.ip,
+        message: `Failed login attempt for ${email}`,
+      }).catch(() => {}); // non-blocking
+
       return res.status(401).json({
         requestId: req.requestId,
         error: {
@@ -82,6 +104,16 @@ async function login(req, res, next) {
     const token = userService.generateToken(user);
 
     logger.info('User logged in', { userId: user.id, email: user.email });
+
+    // Audit successful login
+    securityEvents.inc({ event_type: 'login_success' });
+    auditService.logSecurityEvent({
+      action: 'login_success',
+      email: user.email,
+      ip: req.ip,
+      message: `Successful login for ${user.email}`,
+      metadata: { userId: user.id },
+    }).catch(() => {}); // non-blocking
 
     res.json({
       requestId: req.requestId,

@@ -157,6 +157,25 @@ const activeProvisioningOps = new Gauge(
   []
 );
 
+const provisioningStepDuration = new Histogram(
+  'store_provisioning_step_duration_ms',
+  'Duration of individual provisioning steps in milliseconds',
+  ['engine', 'step'],
+  [500, 1000, 5000, 10000, 30000, 60000, 120000, 300000]
+);
+
+const provisioningFailures = new Counter(
+  'store_provisioning_failures_total',
+  'Total number of provisioning failures by engine and step',
+  ['engine', 'step']
+);
+
+const securityEvents = new Counter(
+  'security_events_total',
+  'Total security events by type',
+  ['event_type']
+);
+
 const processUptimeSeconds = new Gauge(
   'process_uptime_seconds',
   'Process uptime in seconds',
@@ -213,6 +232,9 @@ function serializeMetrics() {
     httpRequestDurationMs,
     storesTotal,
     provisioningDuration,
+    provisioningStepDuration,
+    provisioningFailures,
+    securityEvents,
     activeProvisioningOps,
     processUptimeSeconds,
   ];
@@ -229,6 +251,9 @@ module.exports = {
   httpRequestDurationMs,
   storesTotal,
   provisioningDuration,
+  provisioningStepDuration,
+  provisioningFailures,
+  securityEvents,
   activeProvisioningOps,
   processUptimeSeconds,
   // Utilities

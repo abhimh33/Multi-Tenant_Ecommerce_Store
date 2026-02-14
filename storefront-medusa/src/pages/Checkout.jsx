@@ -17,6 +17,11 @@ export default function Checkout() {
   const [shippingOptions, setShippingOptions] = useState([]);
   const [selectedShipping, setSelectedShipping] = useState('');
 
+  // Refresh cart data on checkout mount to ensure it's up-to-date
+  useEffect(() => {
+    refreshCart();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [form, setForm] = useState({
     email: '',
     first_name: '',
@@ -148,8 +153,8 @@ export default function Checkout() {
                 ${i < step ? 'bg-emerald-100 text-emerald-700'
                   : i === step ? 'bg-surface-900 text-white'
                   : 'bg-surface-100 text-surface-400'}`}>
-                <span className="h-5 w-5 rounded-full border text-center leading-5 text-[10px]
-                  ${i < step ? 'border-emerald-300' : i === step ? 'border-white/30' : 'border-surface-300'}">
+                <span className={`h-5 w-5 rounded-full border text-center leading-5 text-[10px]
+                  ${i < step ? 'border-emerald-300' : i === step ? 'border-white/30' : 'border-surface-300'}`}>
                   {i + 1}
                 </span>
                 {label}

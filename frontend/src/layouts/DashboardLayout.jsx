@@ -13,22 +13,32 @@ import {
   ShoppingBag,
   Shield,
   KeyRound,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '../components/ui/dialog';
 import { cn } from '../lib/utils';
 
 const navItems = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/stores', label: 'Stores', icon: Store },
-  { to: '/stores/new', label: 'New Store', icon: Plus },
-  { to: '/audit', label: 'Audit Log', icon: ScrollText },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/stores', label: 'Stores', icon: Store, end: true },
+  { to: '/stores/new', label: 'New Store', icon: Plus, end: true },
+  { to: '/audit', label: 'Audit Log', icon: ScrollText, end: true },
 ];
 
 function SidebarContent({ onNavigate }) {
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [showPwForm, setShowPwForm] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
   const [pwStatus, setPwStatus] = useState({ loading: false, error: null, success: false });
 
@@ -74,10 +84,11 @@ function SidebarContent({ onNavigate }) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {navItems.map(({ to, label, icon: Icon }) => (
+        {navItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}
+            end={end}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
@@ -156,12 +167,46 @@ function SidebarContent({ onNavigate }) {
           variant="outline"
           size="sm"
           className="w-full justify-start gap-2"
-          onClick={handleLogout}
+          onClick={() => setShowLogoutConfirm(true)}
         >
           <LogOut className="h-4 w-4" />
           Sign out
         </Button>
       </div>
+
+      {/* Sign-out confirmation dialog */}
+      <Dialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 mb-2">
+              <AlertTriangle className="h-6 w-6 text-red-600" />
+            </div>
+            <DialogTitle className="text-center">Sign out</DialogTitle>
+            <DialogDescription className="text-center">
+              Are you sure you want to sign out? You will need to log in again to access the dashboard.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex gap-2 sm:justify-center">
+            <Button
+              variant="outline"
+              onClick={() => setShowLogoutConfirm(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="gap-2"
+              onClick={() => {
+                setShowLogoutConfirm(false);
+                handleLogout();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

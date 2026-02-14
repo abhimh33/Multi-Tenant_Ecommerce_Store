@@ -148,7 +148,7 @@ export default function CreateStore() {
                 </div>
               </div>
             )}
-            {form.engine === 'medusa' && (
+            {(form.engine === 'medusa' || form.engine === 'woocommerce') && (
               <div className="space-y-2">
                 <Label htmlFor="password">Admin Password (optional)</Label>
                 <Input

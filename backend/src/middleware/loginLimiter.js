@@ -2,6 +2,14 @@
 
 const rateLimit = require('express-rate-limit');
 const logger = require('../utils/logger').child('login-limiter');
+const { securityEvents } = require('../utils/metrics');
+
+// Lazy-load auditService to avoid circular dependency
+let _auditService;
+function getAuditService() {
+  if (!_auditService) _auditService = require('../services/auditService');
+  return _auditService;
+}
 
 /**
  * Brute-force login protection.
@@ -37,6 +45,15 @@ function recordFailedAttempt(email) {
       failures: entry.failures,
       lockedUntilISO: new Date(entry.lockedUntil).toISOString(),
     });
+
+    // Audit account lockout
+    securityEvents.inc({ event_type: 'account_locked' });
+    getAuditService().logSecurityEvent({
+      action: 'account_locked',
+      email: key,
+      message: `Account locked after ${entry.failures} failed attempts. Locked until ${new Date(entry.lockedUntil).toISOString()}`,
+      metadata: { failures: entry.failures, lockoutDurationMs: LOCKOUT_DURATION_MS },
+    }).catch(() => {}); // non-blocking
   }
 
   accountLockouts.set(key, entry);
@@ -111,6 +128,16 @@ const loginLimiter = rateLimit({
       retryAfterSeconds,
     });
 
+    // Audit rate limit event
+    securityEvents.inc({ event_type: 'login_rate_limited' });
+    getAuditService().logSecurityEvent({
+      action: 'login_rate_limited',
+      email: req.body?.email,
+      ip: req.ip,
+      message: `Login rate limit exceeded for ${req.body?.email || 'unknown'} from IP ${req.ip}`,
+      metadata: { retryAfterSeconds },
+    }).catch(() => {}); // non-blocking
+
     res.status(429).json({
       requestId: req.requestId,
       error: {
@@ -136,6 +163,15 @@ const registerLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
   handler: (req, res) => {
     logger.warn('Registration rate limit exceeded', { ip: req.ip });
+
+    // Audit rate limit event
+    securityEvents.inc({ event_type: 'registration_rate_limited' });
+    getAuditService().logSecurityEvent({
+      action: 'registration_rate_limited',
+      ip: req.ip,
+      message: `Registration rate limit exceeded from IP ${req.ip}`,
+    }).catch(() => {}); // non-blocking
+
     res.status(429).json({
       requestId: req.requestId,
       error: {

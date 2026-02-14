@@ -6,8 +6,14 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Plus, RefreshCw, ExternalLink } from 'lucide-react';
+import { Plus, RefreshCw, ExternalLink, AlertCircle } from 'lucide-react';
 import { formatDate, formatDuration } from '../lib/utils';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../components/ui/tooltip';
 
 const STATUS_VARIANTS = {
   requested: 'info',
@@ -118,7 +124,21 @@ export default function StoreList() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANTS[store.status]}>{store.status}</Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant={STATUS_VARIANTS[store.status]}>{store.status}</Badge>
+                        {store.status === 'failed' && store.failureReason && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <AlertCircle className="h-3.5 w-3.5 text-destructive" />
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-xs">
+                                <p className="text-xs">{store.failureReason}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">

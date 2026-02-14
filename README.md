@@ -472,15 +472,150 @@ Every API request is scoped to the authenticated user's JWT. Tenant isolation is
 | **State machine** | Strict lifecycle transitions (`requested → provisioning → ready → failed → deleting → deleted`) with invalid-transition rejection |
 | **Optimistic locking** | State updates use `expectedStatus` to prevent race conditions on concurrent transitions |
 | **Store limit** | Configurable per-user store cap (`MAX_STORES_PER_USER`, default 5); excess requests return 429 |
-| **Creation cooldown** | Per-user cooldown between store creations (`STORE_CREATION_COOLDOWN_MS`, default 30 s) |
+| **Creation cooldown** | Per-user cooldown between store creations (`STORE_CREATION_COOLDOWN_MS`, default 5 min) |
 | **Login rate limiter** | Sliding window rate limit on `/auth/login` to prevent brute-force attacks |
+| **Account lockout** | 5 failed login attempts → 15-minute account lockout (HTTP 423) |
+| **Security audit trail** | All login attempts, lockouts, rate limits, and registrations logged to audit_logs with IP/email |
+| **Profanity filter** | Store name validation rejects 35+ offensive words |
 | **Circuit breaker** | Wraps Helm/K8s calls; opens after consecutive failures, auto-recovers after a reset timeout |
 | **Retry with backoff** | Failed provisioning steps are retried with exponential backoff and jitter |
-| **Env validation** | All required environment variables are validated on startup via Joi; missing vars cause a hard abort |
-| **Prometheus metrics** | `/metrics` endpoint exposes request counts, latency histograms, active provisioning ops, store totals |
-| **Graceful shutdown** | SIGTERM/SIGINT handlers drain HTTP connections, stop provisioning, and close the DB pool |
+| **Request timeout** | 30s default for API requests, 10min for provisioning routes |
+| **Payload limits** | Request body capped at 256KB to prevent abuse |
+| **Env validation** | All required environment variables are validated on startup via Joi; `JWT_SECRET` hard-fail in production/staging |
+| **Prometheus metrics** | `/metrics` endpoint (admin-only) exposes request counts, latency histograms, active provisioning ops, store totals, per-step durations, security events |
+| **Graceful shutdown** | SIGTERM/SIGINT handlers drain HTTP connections (15s max), stop provisioning, and close the DB pool |
+| **In-flight tracking** | Active request counter; returns 503 during shutdown |
+| **Crash recovery** | On startup, stores stuck in `requested`/`provisioning` → `failed` (with duration); `deleting` → resumed |
+| **Correlation IDs** | HTTP `requestId` propagated through async provisioning workflow for end-to-end traceability |
+| **Per-step timing** | Each provisioning step (namespace, helm, pods, engine setup) is individually timed and logged |
+| **Security headers** | Helmet with custom CSP, HSTS with preload, X-Frame-Options DENY, strict Referrer-Policy |
+| **CORS** | Multi-origin support with credentials in production |
 | **Log redaction** | Helm `--set` args containing passwords/secrets are redacted before debug logging |
-| **Helmet + CORS** | HTTP security headers (Helmet) and configurable CORS |
+| **DB hardening** | 30s query/statement timeouts, connection retry with backoff, pool size limits |
+
+## Observability
+
+### Structured Logging
+
+All log entries use Winston with structured JSON format. Every store lifecycle event is tagged with:
+- `storeId` — unique store identifier (correlation across all events)
+- `engine` — `woocommerce` or `medusa`
+- `phase` — lifecycle step (`namespace_create`, `helm_install`, `pod_readiness`, `engine_setup`, etc.)
+- `correlationId` — HTTP `requestId` that initiated the operation (survives async provisioning)
+- `durationMs` — per-step execution time
+
+Example log output:
+```json
+{"level":"info","message":"[lifecycle] Step completed: helm_install","storeId":"store-abc12345","engine":"medusa","phase":"helm_install","correlationId":"req-f7e2b3c4","durationMs":8234}
+```
+
+### Prometheus Metrics
+
+Accessible at `GET /api/v1/metrics` (requires admin JWT):
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `http_requests_total` | Counter | method, route, status_code | Total HTTP requests |
+| `http_request_duration_ms` | Histogram | method, route | Request latency distribution |
+| `stores_total` | Gauge | status | Current store count by status |
+| `store_provisioning_duration_ms` | Histogram | engine | Total provisioning time |
+| `store_provisioning_step_duration_ms` | Histogram | engine, step | Per-step provisioning time |
+| `store_provisioning_failures_total` | Counter | engine, step | Failures by step |
+| `active_provisioning_operations` | Gauge | — | In-flight provisioning count |
+| `security_events_total` | Counter | event_type | Login, lockout, rate limit events |
+| `process_uptime_seconds` | Gauge | — | Process uptime |
+
+### Security Audit Trail
+
+Security events are logged to the same `audit_logs` table as store lifecycle events, visible in the admin audit log page. Events include:
+
+| Event | Trigger | Fields |
+|-------|---------|--------|
+| `login_success` | Successful authentication | email, IP, userId |
+| `login_failed` | Wrong credentials | email, IP |
+| `account_locked` | 5+ consecutive failures | email, lockout duration |
+| `login_rate_limited` | Rate limit exceeded | email, IP, retry-after |
+| `registration` | New user registered | email, IP, userId, role |
+| `registration_rate_limited` | Registration rate limit | IP |
+
+## Horizontal Scaling Strategy
+
+The current architecture is designed for single-instance operation (Docker Desktop / single VPS). Here's the documented path to horizontal scaling:
+
+### API Layer (Stateless)
+
+The Express backend is **nearly stateless** — scale horizontally behind a load balancer with these considerations:
+
+| Component | Current | Scaled |
+|-----------|---------|--------|
+| **Rate limiting** | In-memory (`express-rate-limit`) | Redis store (`rate-limit-redis`) |
+| **Account lockout** | In-memory `Map` | Redis or DB-backed lockout table |
+| **Creation cooldown** | In-memory `Map` | Redis key with TTL |
+| **Session/JWT** | Stateless JWT | No change needed |
+| **Health probes** | `/health/live` | Use for load balancer health checks |
+
+### Provisioning Concurrency
+
+The `activeOperations` Map prevents concurrent provisioning of the same store **within one process**. For multi-instance:
+
+1. **DB-level locking**: Use PostgreSQL advisory locks (`pg_advisory_xact_lock(store_id_hash)`) before starting provisioning
+2. **Optimistic locking** (already implemented): The `expectedStatus` guard ensures only one instance wins the state transition
+3. **Leader election**: For `recoverStuckStores()`, use a Kubernetes lease or DB-based leader election to ensure only one instance runs recovery on startup
+
+### Database
+
+- PostgreSQL supports connection pooling via PgBouncer
+- All queries use parameterized queries (no SQL injection risk)
+- Schema supports Row-Level Security (RLS) as a future enhancement
+
+### Provisioned Stores
+
+Stores are inherently isolated (1 namespace per store). The Kubernetes cluster itself is the scaling boundary — add nodes to support more concurrent stores.
+
+### Recommended Architecture (2+ Instances)
+
+```
+                    ┌─────────────────┐
+                    │  Load Balancer  │
+                    │  (Nginx/HAProxy)│
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+        ┌──────────┐  ┌──────────┐  ┌──────────┐
+        │ Backend 1│  │ Backend 2│  │ Backend 3│
+        │ (Express)│  │ (Express)│  │ (Express)│
+        └────┬─────┘  └────┬─────┘  └────┬─────┘
+             │              │              │
+        ┌────▼──────────────▼──────────────▼────┐
+        │           Redis (shared state)         │
+        │  Rate limits, lockouts, cooldowns     │
+        └────────────────┬───────────────────────┘
+                         │
+        ┌────────────────▼───────────────────────┐
+        │        PostgreSQL (primary)            │
+        │  Stores, audit logs, users             │
+        │  Advisory locks for provisioning       │
+        └────────────────────────────────────────┘
+```
+
+## Local-to-VPS Deployment Story
+
+The Helm chart uses **values file separation** to support both local development and production VPS deployment without code changes:
+
+| File | Purpose | Key Differences |
+|------|---------|-----------------|
+| `values.yaml` | Base defaults | Shared configuration |
+| `values-local.yaml` | Docker Desktop | `imagePullPolicy: Never`, `.localhost` domains, NodePort services, relaxed resource limits |
+| `values-vps.yaml` | K3s / production | Real domains, Traefik ingress, cert-manager TLS, persistent storage, production resource requests |
+
+### Migration Path
+
+1. **Local development** → `HELM_VALUES_FILE=values-local.yaml` (default)
+2. **VPS staging** → `HELM_VALUES_FILE=values-vps.yaml` with staging domain
+3. **Production** → Same `values-vps.yaml` with production domain, TLS, and DNS wildcard
+
+The backend automatically selects the values file based on `HELM_VALUES_FILE` env var. No code changes required — only infrastructure configuration.
 
 ## Known Limitations
 
@@ -489,8 +624,8 @@ These items are documented and accepted trade-offs for the current scope:
 | ID | Description | Impact |
 |----|-------------|--------|
 | **F10** | No PostgreSQL Row-Level Security (RLS) | Tenant isolation is enforced at the application layer (all queries filter by `owner_id`). RLS would add defense-in-depth but is not required for the current single-backend architecture. |
-| **F11** | Creation cooldown uses an in-memory `Map` | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed cooldown to prevent cross-instance bypass. |
-| **F12** | `requestId` not propagated to async provisioning logs | Provisioning runs as a background fire-and-forget task after the HTTP response; the original request context is not carried into those log entries. |
+| **F11** | Creation cooldown uses an in-memory `Map` | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed cooldown to prevent cross-instance bypass. See [Horizontal Scaling Strategy](#horizontal-scaling-strategy) for the migration path. |
+| ~~**F12**~~ | ~~`requestId` not propagated to async provisioning logs~~ | **Resolved** — `correlationId` is now propagated from the HTTP request through all async provisioning steps, including per-step timing logs. |
 
 ## MedusaJS Storefront SPA
 

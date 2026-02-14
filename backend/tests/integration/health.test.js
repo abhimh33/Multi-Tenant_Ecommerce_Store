@@ -8,7 +8,37 @@
 
 const BASE = 'http://localhost:3001/api/v1';
 
+// Helper to get an admin JWT for protected endpoints
+async function getAdminToken() {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@example.com', password: 'admin123!' }),
+  });
+  if (res.status !== 200) {
+    // If admin user doesn't exist, try registering (first user is admin)
+    const regRes = await fetch(`${BASE}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', username: 'admin', password: 'admin123!' }),
+    });
+    const regData = await regRes.json();
+    return regData.token;
+  }
+  const data = await res.json();
+  return data.token;
+}
+
 describe('Health & Metrics API', () => {
+  let adminToken;
+
+  beforeAll(async () => {
+    try {
+      adminToken = await getAdminToken();
+    } catch {
+      // Tests that need auth will be skipped if this fails
+    }
+  });
   describe('GET /health', () => {
     it('returns health status with checks', async () => {
       const res = await fetch(`${BASE}/health`);
@@ -32,8 +62,15 @@ describe('Health & Metrics API', () => {
   });
 
   describe('GET /metrics', () => {
-    it('returns Prometheus text format', async () => {
+    it('returns 401 without auth token', async () => {
       const res = await fetch(`${BASE}/metrics`);
+      expect(res.status).toBe(401);
+    });
+
+    it('returns Prometheus text format with admin token', async () => {
+      const res = await fetch(`${BASE}/metrics`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` },
+      });
       const text = await res.text();
 
       expect(res.status).toBe(200);
@@ -43,8 +80,15 @@ describe('Health & Metrics API', () => {
   });
 
   describe('GET /metrics/json', () => {
-    it('returns JSON metrics summary', async () => {
+    it('returns 401 without auth token', async () => {
       const res = await fetch(`${BASE}/metrics/json`);
+      expect(res.status).toBe(401);
+    });
+
+    it('returns JSON metrics summary with admin token', async () => {
+      const res = await fetch(`${BASE}/metrics/json`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` },
+      });
       const data = await res.json();
 
       expect(res.status).toBe(200);

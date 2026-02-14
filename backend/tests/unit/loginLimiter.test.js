@@ -15,6 +15,14 @@ jest.mock('../../src/utils/logger', () => {
   return { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), child };
 });
 
+jest.mock('../../src/utils/metrics', () => ({
+  securityEvents: { inc: jest.fn() },
+}));
+
+jest.mock('../../src/services/auditService', () => ({
+  logSecurityEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
 // Set env for fast lockout in tests
 process.env.ACCOUNT_LOCKOUT_MAX_ATTEMPTS = '3';
 process.env.ACCOUNT_LOCKOUT_DURATION_MS = '2000'; // 2s lockout for testing

@@ -18,7 +18,7 @@ async function createStore(req, res, next) {
     // Owner is ALWAYS derived from the authenticated user — never from client input
     const ownerId = req.user.id;
 
-    const store = await provisionerService.createStore({ name, engine, ownerId, theme, tenantPassword: password });
+    const store = await provisionerService.createStore({ name, engine, ownerId, theme, tenantPassword: password, correlationId: req.requestId });
 
     res.status(202).json({
       requestId: req.requestId,

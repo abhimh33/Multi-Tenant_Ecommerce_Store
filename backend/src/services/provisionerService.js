@@ -21,6 +21,8 @@ const {
 const {
   storesTotal,
   provisioningDuration,
+  provisioningStepDuration,
+  provisioningFailures,
   activeProvisioningOps,
 } = require('../utils/metrics');
 
@@ -37,6 +39,59 @@ const {
  * - All operations are audited.
  */
 
+// ─── Lifecycle Phase Constants ───────────────────────────────────────────────
+const PHASES = {
+  NAMESPACE_CREATE: 'namespace_create',
+  HELM_INSTALL: 'helm_install',
+  POD_READINESS: 'pod_readiness',
+  ENGINE_SETUP: 'engine_setup',
+  URL_EXTRACTION: 'url_extraction',
+  FINALIZE: 'finalize',
+  HELM_UNINSTALL: 'helm_uninstall',
+  NAMESPACE_DELETE: 'namespace_delete',
+  CLEANUP_VERIFY: 'cleanup_verify',
+};
+
+/**
+ * Measure the duration of a provisioning step.
+ * Logs structured timing data and observes the metric.
+ * @param {string} storeId
+ * @param {string} engine
+ * @param {string} phase - One of PHASES constants
+ * @param {string} correlationId - HTTP requestId for traceability
+ * @param {Function} fn - Async function to execute and measure
+ * @returns {Promise<*>} Result of fn()
+ */
+async function timedStep(storeId, engine, phase, correlationId, fn) {
+  const stepStart = Date.now();
+  logger.info(`[lifecycle] Step started: ${phase}`, {
+    storeId, engine, phase, correlationId,
+  });
+
+  try {
+    const result = await fn();
+    const durationMs = Date.now() - stepStart;
+
+    provisioningStepDuration.observe({ engine, step: phase }, durationMs);
+    logger.info(`[lifecycle] Step completed: ${phase}`, {
+      storeId, engine, phase, correlationId, durationMs,
+    });
+
+    return result;
+  } catch (err) {
+    const durationMs = Date.now() - stepStart;
+    provisioningStepDuration.observe({ engine, step: phase }, durationMs);
+    provisioningFailures.inc({ engine, step: phase });
+
+    logger.error(`[lifecycle] Step failed: ${phase}`, {
+      storeId, engine, phase, correlationId, durationMs,
+      error: err.message,
+    });
+
+    throw err;
+  }
+}
+
 // In-progress provisioning operations — prevents concurrent provision of same store
 const activeOperations = new Map();
 
@@ -50,7 +105,7 @@ const activeOperations = new Map();
  * @param {string} [params.ownerId='default'] - Owner for limit enforcement
  * @returns {Promise<Object>} Created store record
  */
-async function createStore({ name, engine, ownerId = 'default', theme, tenantPassword }) {
+async function createStore({ name, engine, ownerId = 'default', theme, tenantPassword, correlationId }) {
   // Default theme for WooCommerce if not specified
   const resolvedTheme = engine === 'woocommerce' ? (theme || 'storefront') : null;
   // 1. Idempotency: check if store with this name already exists
@@ -105,7 +160,8 @@ async function createStore({ name, engine, ownerId = 'default', theme, tenantPas
   });
 
   // 5. Kick off async provisioning (non-blocking)
-  provisionStoreAsync(storeId, { tenantPassword }).catch(err => {
+  // Pass correlationId for end-to-end request traceability across async work
+  provisionStoreAsync(storeId, { tenantPassword, correlationId }).catch(err => {
     logger.error('Unhandled provisioning error', { storeId, error: err.message });
   });
 
@@ -124,17 +180,22 @@ async function createStore({ name, engine, ownerId = 'default', theme, tenantPas
  * 5. Extract URLs
  * 6. Transition to READY or FAILED
  */
-async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
+async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = {}) {
   // Prevent concurrent provisioning of the same store
   if (activeOperations.has(storeId)) {
     logger.warn('Provisioning already in progress', { storeId });
     return;
   }
   activeOperations.set(storeId, Date.now());
+  const cid = correlationId || `async-${storeId}`;
 
   try {
     let store = await storeRegistry.findById(storeId);
     if (!store) throw new NotFoundError('Store', storeId);
+
+    logger.info('[lifecycle] Provisioning workflow started', {
+      storeId, engine: store.engine, correlationId: cid,
+    });
 
     // Step 1: Transition to PROVISIONING (with optimistic lock)
     assertTransition(store.status, STATES.PROVISIONING);
@@ -165,15 +226,17 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
       storeId,
       eventType: 'info',
       message: 'Creating Kubernetes namespace',
-      metadata: { namespace: store.namespace },
+      metadata: { namespace: store.namespace, correlationId: cid },
     });
 
-    await retryWithBackoff(
-      () => k8sService.createNamespace(store.namespace, {
-        'mt-ecommerce/engine': store.engine,
-        'mt-ecommerce/store-name': store.name,
-      }),
-      { maxRetries: 2, operationName: 'createNamespace' }
+    await timedStep(storeId, store.engine, PHASES.NAMESPACE_CREATE, cid, () =>
+      retryWithBackoff(
+        () => k8sService.createNamespace(store.namespace, {
+          'mt-ecommerce/engine': store.engine,
+          'mt-ecommerce/store-name': store.name,
+        }),
+        { maxRetries: 2, operationName: 'createNamespace' }
+      )
     );
 
     // Step 3: Install Helm chart
@@ -181,7 +244,7 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
       storeId,
       eventType: 'helm_install',
       message: `Installing Helm release '${store.helmRelease}'`,
-      metadata: { engine: store.engine, namespace: store.namespace },
+      metadata: { engine: store.engine, namespace: store.namespace, correlationId: cid },
     });
 
     // Generate random credentials for this store (engine-aware)
@@ -257,14 +320,16 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
       };
     }
 
-    await retryWithBackoff(
-      () => helmService.install({
-        releaseName: store.helmRelease,
-        namespace: store.namespace,
-        engine: store.engine,
-        setValues,
-      }),
-      { maxRetries: 1, operationName: 'helmInstall' }
+    await timedStep(storeId, store.engine, PHASES.HELM_INSTALL, cid, () =>
+      retryWithBackoff(
+        () => helmService.install({
+          releaseName: store.helmRelease,
+          namespace: store.namespace,
+          engine: store.engine,
+          setValues,
+        }),
+        { maxRetries: 1, operationName: 'helmInstall' }
+      )
     );
 
     // Step 4: Poll for readiness
@@ -272,18 +337,22 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
       storeId,
       eventType: 'info',
       message: 'Waiting for pods to become ready',
+      metadata: { correlationId: cid },
     });
 
-    const readiness = await k8sService.pollForReadiness(store.namespace, {
-      onProgress: (status) => {
-        logger.debug('Provisioning progress', {
-          storeId,
-          podsReady: `${status.podsReadyCount}/${status.podsTotal}`,
-          jobsComplete: status.jobsComplete,
-          elapsedMs: status.elapsedMs,
-        });
-      },
-    });
+    const readiness = await timedStep(storeId, store.engine, PHASES.POD_READINESS, cid, () =>
+      k8sService.pollForReadiness(store.namespace, {
+        onProgress: (status) => {
+          logger.debug('Provisioning progress', {
+            storeId,
+            correlationId: cid,
+            podsReady: `${status.podsReadyCount}/${status.podsTotal}`,
+            jobsComplete: status.jobsComplete,
+            elapsedMs: status.elapsedMs,
+          });
+        },
+      })
+    );
 
     if (!readiness.ready) {
       const reason = readiness.timedOut
@@ -299,33 +368,38 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
         storeId,
         eventType: 'info',
         message: 'Running WooCommerce setup (WP-CLI via kubectl exec)',
+        metadata: { correlationId: cid },
       });
 
       try {
-        const setupResult = await storeSetupService.setupWooCommerce({
-          namespace: store.namespace,
-          storeId,
-          siteUrl: `http://${storeId}${config.store.domainSuffix}`,
-          credentials,
-          theme: store.theme || 'storefront',
-        });
+        const setupResult = await timedStep(storeId, store.engine, PHASES.ENGINE_SETUP, cid, () =>
+          storeSetupService.setupWooCommerce({
+            namespace: store.namespace,
+            storeId,
+            siteUrl: `http://${storeId}${config.store.domainSuffix}`,
+            credentials,
+            theme: store.theme || 'storefront',
+          })
+        );
 
         await auditService.log({
           storeId,
           eventType: 'info',
           message: 'WooCommerce setup completed',
-          metadata: { setupResult },
+          metadata: { setupResult, correlationId: cid },
         });
       } catch (setupErr) {
         // Setup failure is non-fatal — store is still usable (user completes install via browser)
         logger.warn('WooCommerce setup failed (non-fatal)', {
           storeId,
+          correlationId: cid,
           error: setupErr.message,
         });
         await auditService.log({
           storeId,
           eventType: 'warning',
           message: `WooCommerce auto-setup failed: ${setupErr.message}. Store is usable — complete setup via browser at /wp-admin.`,
+          metadata: { correlationId: cid },
         });
       }
     } else if (store.engine === 'medusa') {
@@ -333,32 +407,37 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
         storeId,
         eventType: 'info',
         message: 'Running MedusaJS setup (Medusa CLI via kubectl exec)',
+        metadata: { correlationId: cid },
       });
 
       try {
-        const setupResult = await storeSetupService.setupMedusa({
-          namespace: store.namespace,
-          storeId,
-          credentials,
-          storeName: store.name,
-        });
+        const setupResult = await timedStep(storeId, store.engine, PHASES.ENGINE_SETUP, cid, () =>
+          storeSetupService.setupMedusa({
+            namespace: store.namespace,
+            storeId,
+            credentials,
+            storeName: store.name,
+          })
+        );
 
         await auditService.log({
           storeId,
           eventType: 'info',
           message: 'MedusaJS setup completed',
-          metadata: { setupResult },
+          metadata: { setupResult, correlationId: cid },
         });
       } catch (setupErr) {
         // Setup failure is non-fatal — Medusa may auto-run migrations on startup
         logger.warn('MedusaJS setup failed (non-fatal)', {
           storeId,
+          correlationId: cid,
           error: setupErr.message,
         });
         await auditService.log({
           storeId,
           eventType: 'warning',
           message: `MedusaJS auto-setup failed: ${setupErr.message}. Store may still be usable — check /health endpoint.`,
+          metadata: { correlationId: cid },
         });
       }
     }
@@ -395,12 +474,13 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
       previousStatus: STATES.PROVISIONING,
       newStatus: STATES.READY,
       message: `Store provisioned successfully in ${Math.round(provisioningDurationMs / 1000)}s`,
-      metadata: { storefrontUrl, adminUrl, provisioningDurationMs },
+      metadata: { storefrontUrl, adminUrl, provisioningDurationMs, correlationId: cid },
     });
 
-    logger.info('Store provisioned successfully', {
+    logger.info('[lifecycle] Provisioning workflow completed', {
       storeId,
       engine: store.engine,
+      correlationId: cid,
       durationMs: provisioningDurationMs,
     });
 
@@ -410,7 +490,13 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
 
   } catch (err) {
     // Transition to FAILED
-    logger.error('Store provisioning failed', { storeId, error: err.message });
+    const failureDurationMs = activeOperations.has(storeId)
+      ? Date.now() - activeOperations.get(storeId)
+      : null;
+
+    logger.error('[lifecycle] Provisioning workflow failed', {
+      storeId, correlationId: cid, error: err.message, failureDurationMs,
+    });
 
     await storeRegistry.update(storeId, {
       status: STATES.FAILED,
@@ -428,7 +514,7 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
       eventType: 'error',
       newStatus: STATES.FAILED,
       message: `Provisioning failed: ${err.message}`,
-      metadata: { errorCode: err.code, retryable: err.retryable },
+      metadata: { errorCode: err.code, retryable: err.retryable, correlationId: cid, failureDurationMs },
     }).catch(() => { }); // never crash on audit failure
 
     storesTotal.inc({ status: 'failed' });
@@ -499,10 +585,15 @@ async function deleteStoreAsync(storeId) {
     return;
   }
   activeOperations.set(storeId, Date.now());
+  const deleteStart = Date.now();
 
   try {
     const store = await storeRegistry.findById(storeId);
     if (!store) throw new NotFoundError('Store', storeId);
+
+    logger.info('[lifecycle] Deletion workflow started', {
+      storeId, engine: store.engine,
+    });
 
     // Step 1: Uninstall Helm release
     await auditService.log({
@@ -511,12 +602,14 @@ async function deleteStoreAsync(storeId) {
       message: `Uninstalling Helm release '${store.helmRelease}'`,
     });
 
-    await retryWithBackoff(
-      () => helmService.uninstall({
-        releaseName: store.helmRelease,
-        namespace: store.namespace,
-      }),
-      { maxRetries: 2, operationName: 'helmUninstall' }
+    await timedStep(storeId, store.engine, PHASES.HELM_UNINSTALL, `delete-${storeId}`, () =>
+      retryWithBackoff(
+        () => helmService.uninstall({
+          releaseName: store.helmRelease,
+          namespace: store.namespace,
+        }),
+        { maxRetries: 2, operationName: 'helmUninstall' }
+      )
     );
 
     // Step 2: Delete namespace
@@ -526,27 +619,27 @@ async function deleteStoreAsync(storeId) {
       message: `Deleting namespace '${store.namespace}'`,
     });
 
-    await retryWithBackoff(
-      () => k8sService.deleteNamespace(store.namespace),
-      { maxRetries: 2, operationName: 'deleteNamespace' }
+    await timedStep(storeId, store.engine, PHASES.NAMESPACE_DELETE, `delete-${storeId}`, () =>
+      retryWithBackoff(
+        () => k8sService.deleteNamespace(store.namespace),
+        { maxRetries: 2, operationName: 'deleteNamespace' }
+      )
     );
 
     // Step 3: Wait for cleanup verification (namespace deletion is async)
-    let cleanupVerified = false;
-    const deadline = Date.now() + 120000; // 2 min max wait
-    while (Date.now() < deadline) {
-      const cleanup = await k8sService.verifyCleanup(store.namespace);
-      if (cleanup.clean) {
-        cleanupVerified = true;
-        break;
+    const cleanupVerified = await timedStep(storeId, store.engine, PHASES.CLEANUP_VERIFY, `delete-${storeId}`, async () => {
+      const deadline = Date.now() + 120000; // 2 min max wait
+      while (Date.now() < deadline) {
+        const cleanup = await k8sService.verifyCleanup(store.namespace);
+        if (cleanup.clean) return true;
+        logger.debug('Waiting for cleanup', { storeId, remaining: cleanup.remaining });
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
-      logger.debug('Waiting for cleanup', { storeId, remaining: cleanup.remaining });
-      await new Promise(resolve => setTimeout(resolve, 3000));
-    }
-
-    if (!cleanupVerified) {
       logger.warn('Cleanup verification timed out — marking deleted anyway', { storeId });
-    }
+      return false;
+    });
+
+    const deletionDurationMs = Date.now() - deleteStart;
 
     // Step 4: Transition to DELETED
     await storeRegistry.update(storeId, {
@@ -559,10 +652,13 @@ async function deleteStoreAsync(storeId) {
       eventType: 'status_change',
       previousStatus: STATES.DELETING,
       newStatus: STATES.DELETED,
-      message: `Store deleted successfully${cleanupVerified ? '' : ' (cleanup verification timed out)'}`,
+      message: `Store deleted successfully in ${Math.round(deletionDurationMs / 1000)}s${cleanupVerified ? '' : ' (cleanup verification timed out)'}`,
+      metadata: { deletionDurationMs, cleanupVerified },
     });
 
-    logger.info('Store deleted successfully', { storeId });
+    logger.info('[lifecycle] Deletion workflow completed', {
+      storeId, engine: store.engine, deletionDurationMs,
+    });
 
   } catch (err) {
     logger.error('Store deletion failed', { storeId, error: err.message });
@@ -605,21 +701,50 @@ async function retryStore(storeId) {
     );
   }
 
-  // Cleanup any leftover resources before retrying
+  // Cleanup any leftover resources before retrying (idempotent)
+  logger.info('[lifecycle] Pre-retry cleanup started', { storeId, retryCount: store.retryCount + 1 });
   try {
     await helmService.uninstall({
       releaseName: store.helmRelease,
       namespace: store.namespace,
     });
-    await k8sService.deleteNamespace(store.namespace);
-    // Brief wait for cleanup
-    await new Promise(resolve => setTimeout(resolve, 5000));
   } catch (cleanupErr) {
-    logger.warn('Pre-retry cleanup encountered errors (continuing)', {
-      storeId,
-      error: cleanupErr.message,
+    logger.debug('Helm uninstall during pre-retry cleanup (expected if no release)', {
+      storeId, error: cleanupErr.message,
     });
   }
+
+  try {
+    await k8sService.deleteNamespace(store.namespace);
+  } catch (cleanupErr) {
+    logger.debug('Namespace delete during pre-retry cleanup (expected if no namespace)', {
+      storeId, error: cleanupErr.message,
+    });
+  }
+
+  // Wait and verify cleanup — ensure no leftover resources before re-provisioning
+  const cleanupDeadline = Date.now() + 15000; // 15s max wait
+  while (Date.now() < cleanupDeadline) {
+    try {
+      const cleanup = await k8sService.verifyCleanup(store.namespace);
+      if (cleanup.clean) {
+        logger.info('[lifecycle] Pre-retry cleanup verified — namespace is clean', { storeId });
+        break;
+      }
+    } catch (_err) {
+      // verifyCleanup may throw if namespace doesn't exist — that's clean
+      logger.info('[lifecycle] Pre-retry cleanup verified — namespace not found', { storeId });
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+
+  await auditService.log({
+    storeId,
+    eventType: 'info',
+    message: `Pre-retry cleanup completed. Leftover resources removed before retry #${store.retryCount + 1}`,
+    metadata: { retryCount: store.retryCount + 1 },
+  });
 
   // Transition back to REQUESTED
   assertTransition(store.status, STATES.REQUESTED);
@@ -684,46 +809,81 @@ async function getStoreLogs(storeId, options = {}) {
 /**
  * Recover stores stuck in transitional states (called on backend startup).
  * This handles the case where the backend crashed mid-provisioning.
+ * 
+ * Recovery strategy:
+ * - REQUESTED / PROVISIONING → mark as FAILED (safe to retry)
+ * - DELETING → resume async deletion to completion
+ * 
+ * Each recovery action is audited for full traceability.
  */
 async function recoverStuckStores() {
   const stuck = await storeRegistry.findStuckStores();
 
   if (stuck.length === 0) {
-    logger.info('No stuck stores found on startup');
+    logger.info('[lifecycle] No stuck stores found on startup — state is consistent');
     return;
   }
 
-  logger.warn(`Found ${stuck.length} store(s) in transitional state — recovering`, {
+  logger.warn(`[lifecycle] Found ${stuck.length} store(s) in transitional state — initiating recovery`, {
     storeIds: stuck.map(s => s.id),
+    states: stuck.map(s => ({ id: s.id, status: s.status, engine: s.engine })),
   });
+
+  let recoveredCount = 0;
+  let resumedCount = 0;
+  let failedCount = 0;
 
   for (const store of stuck) {
     try {
       if (store.status === STATES.REQUESTED || store.status === STATES.PROVISIONING) {
+        // Calculate how long the store was stuck
+        const stuckSince = store.provisioningStartedAt || store.createdAt;
+        const stuckDurationMs = stuckSince ? Date.now() - new Date(stuckSince).getTime() : null;
+
         // Mark as failed — operator can retry
         await storeRegistry.update(store.id, {
           status: STATES.FAILED,
           failureReason: 'Backend restarted during provisioning. Safe to retry.',
+          provisioningCompletedAt: new Date().toISOString(),
         });
         await auditService.log({
           storeId: store.id,
           eventType: 'recovery',
           previousStatus: store.status,
           newStatus: STATES.FAILED,
-          message: 'Marked as failed after backend restart',
+          message: `Recovered after backend restart. Was stuck in '${store.status}' for ${stuckDurationMs ? Math.round(stuckDurationMs / 1000) + 's' : 'unknown duration'}.`,
+          metadata: { stuckDurationMs, previousStatus: store.status, engine: store.engine },
         });
-        logger.info('Recovered stuck provisioning store', { storeId: store.id });
+        logger.info('[lifecycle] Recovered stuck provisioning store', {
+          storeId: store.id, previousStatus: store.status, engine: store.engine, stuckDurationMs,
+        });
+        recoveredCount++;
       } else if (store.status === STATES.DELETING) {
         // Resume deletion
-        logger.info('Resuming stuck deletion', { storeId: store.id });
+        logger.info('[lifecycle] Resuming stuck deletion', { storeId: store.id, engine: store.engine });
+        await auditService.log({
+          storeId: store.id,
+          eventType: 'recovery',
+          previousStatus: STATES.DELETING,
+          message: 'Resuming deletion after backend restart',
+          metadata: { engine: store.engine },
+        });
         deleteStoreAsync(store.id).catch(err => {
           logger.error('Failed to resume deletion', { storeId: store.id, error: err.message });
         });
+        resumedCount++;
       }
     } catch (err) {
-      logger.error('Failed to recover stuck store', { storeId: store.id, error: err.message });
+      logger.error('[lifecycle] Failed to recover stuck store', {
+        storeId: store.id, error: err.message,
+      });
+      failedCount++;
     }
   }
+
+  logger.info('[lifecycle] Recovery summary', {
+    total: stuck.length, recovered: recoveredCount, resumed: resumedCount, failed: failedCount,
+  });
 }
 
 /**

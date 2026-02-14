@@ -121,7 +121,7 @@ export async function updateCart(cartId, data) {
 /* ── Shipping ───────────────────────────────── */
 export async function listShippingOptions(cartId) {
   const { shipping_options } = await request(
-    `/store/shipping-options/${cartId}`
+    `/store/shipping-options?cart_id=${cartId}`
   );
   return shipping_options;
 }
