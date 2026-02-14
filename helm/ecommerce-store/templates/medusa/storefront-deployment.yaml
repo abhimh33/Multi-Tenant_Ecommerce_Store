@@ -1,0 +1,43 @@
+{{- if and (eq .Values.engine "medusa") .Values.storefront.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ecommerce-store.fullname" . }}-storefront
+  labels:
+    {{- include "ecommerce-store.storefront.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.storefront.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "ecommerce-store.storefront.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ecommerce-store.storefront.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: storefront
+          image: "{{ .Values.storefront.image.repository }}:{{ .Values.storefront.image.tag }}"
+          imagePullPolicy: {{ .Values.storefront.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: MEDUSA_BACKEND_URL
+              value: "http://{{ include "ecommerce-store.medusa.serviceName" . }}:9000"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.storefront.resources | nindent 12 }}
+{{- end }}

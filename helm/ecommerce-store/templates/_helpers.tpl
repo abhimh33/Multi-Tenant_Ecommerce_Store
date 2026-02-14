@@ -165,3 +165,27 @@ Generate the Medusa PostgreSQL service hostname.
 {{- define "ecommerce-store.medusa.postgresqlServiceName" -}}
 {{- printf "%s-medusa-db" (include "ecommerce-store.fullname" .) }}
 {{- end }}
+
+{{/*
+Storefront-specific labels.
+*/}}
+{{- define "ecommerce-store.storefront.labels" -}}
+{{ include "ecommerce-store.labels" . }}
+app.kubernetes.io/name: storefront
+app.kubernetes.io/component: frontend
+{{- end }}
+
+{{/*
+Storefront selector labels.
+*/}}
+{{- define "ecommerce-store.storefront.selectorLabels" -}}
+app.kubernetes.io/name: storefront
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
+Generate the Storefront service hostname.
+*/}}
+{{- define "ecommerce-store.storefront.serviceName" -}}
+{{- printf "%s-storefront" (include "ecommerce-store.fullname" .) }}
+{{- end }}

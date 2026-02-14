@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-surface-200;
+  }
+  body {
+    @apply bg-white text-surface-900 font-sans;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-surface-900 px-6 py-3
+           text-sm font-semibold text-white transition-all duration-200
+           hover:bg-surface-800 active:scale-[0.98]
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-surface-300
+           bg-white px-6 py-3 text-sm font-semibold text-surface-900 transition-all duration-200
+           hover:bg-surface-50 hover:border-surface-400 active:scale-[0.98]
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2
+           text-sm font-medium text-surface-600 transition-all duration-200
+           hover:bg-surface-100 hover:text-surface-900;
+  }
+  .input-field {
+    @apply w-full rounded-lg border border-surface-300 bg-white px-4 py-3 text-sm
+           text-surface-900 placeholder:text-surface-400 transition-colors duration-200
+           focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .badge-sale {
+    @apply badge bg-red-100 text-red-700;
+  }
+  .badge-new {
+    @apply badge bg-emerald-100 text-emerald-700;
+  }
+  .card {
+    @apply rounded-2xl border border-surface-200 bg-white transition-shadow duration-300
+           hover:shadow-lg hover:shadow-surface-200/50;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Skeleton loading animation */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  @apply rounded bg-surface-200;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

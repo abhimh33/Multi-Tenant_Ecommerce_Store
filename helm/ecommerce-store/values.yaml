@@ -155,3 +155,21 @@ medusa:
         memory: "256Mi"
     securityContext:
       fsGroup: 999
+# ──────────────────────────────────────────────
+# Storefront (optional SPA frontend for medusa engine)
+# ──────────────────────────────────────────────
+storefront:
+  enabled: false
+  image:
+    repository: storefront-medusa
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  storeName: "My Store"
+  resources:
+    requests:
+      cpu: "25m"
+      memory: "32Mi"
+    limits:
+      cpu: "100m"
+      memory: "64Mi"
