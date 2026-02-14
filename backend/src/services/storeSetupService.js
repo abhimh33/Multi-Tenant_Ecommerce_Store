@@ -883,10 +883,51 @@ async function updateMedusaAdminPassword({ namespace, storeId, adminEmail, curre
   }
 }
 
+/**
+ * Update the WordPress admin user's password inside a running WooCommerce store.
+ * Uses WP-CLI via kubectl exec.
+ *
+ * @param {Object} params
+ * @param {string} params.namespace - K8s namespace
+ * @param {string} params.storeId - For logging
+ * @param {string} params.adminUsername - WordPress admin username
+ * @param {string} params.newPassword - New admin password
+ * @returns {Promise<boolean>} true if successful
+ */
+async function updateWooCommerceAdminPassword({ namespace, storeId, adminUsername, newPassword }) {
+  logger.info('Updating WordPress admin password', { storeId, namespace, adminUsername });
+
+  const podName = await findWordPressPod(namespace);
+  await ensureWpCli({ namespace, podName });
+
+  // Escape single quotes in password for shell safety
+  const escapedPassword = newPassword.replace(/'/g, "'\\''");
+
+  try {
+    const { stdout } = await kubectlExec({
+      namespace,
+      podName,
+      command: `wp --allow-root user update '${adminUsername}' --user_pass='${escapedPassword}' --path=/var/www/html 2>&1 && echo "PASSWORD_UPDATED"`,
+      timeoutMs: 30000,
+    });
+
+    if (stdout.includes('PASSWORD_UPDATED')) {
+      logger.info('WordPress admin password updated successfully', { storeId });
+      return true;
+    }
+    logger.warn('WordPress admin password update returned unexpected output', { storeId, output: stdout });
+    return false;
+  } catch (err) {
+    logger.error('Failed to update WordPress admin password', { storeId, error: err.message });
+    throw err;
+  }
+}
+
 module.exports = {
   setupWooCommerce,
   setupMedusa,
   updateMedusaAdminPassword,
+  updateWooCommerceAdminPassword,
   kubectlExec,
   kubectlExecMedusa,
   findWordPressPod,

@@ -120,10 +120,9 @@ async function changePassword(req, res, next) {
     // 1. Update control-plane password
     await userService.changePassword(userId, currentPassword, newPassword);
 
-    // 2. Propagate to all owned Medusa stores that are ready
+    // 2. Propagate to all owned stores that are ready (both engines)
     const { stores } = await storeRegistry.list({
       ownerId: userId,
-      engine: 'medusa',
       status: 'ready',
       limit: 100,
       offset: 0,
@@ -139,13 +138,24 @@ async function changePassword(req, res, next) {
           continue;
         }
 
-        const success = await storeSetupService.updateMedusaAdminPassword({
-          namespace: store.namespace,
-          storeId: store.id,
-          adminEmail: creds.email,
-          currentPassword: creds.password,
-          newPassword,
-        });
+        let success = false;
+
+        if (store.engine === 'medusa') {
+          success = await storeSetupService.updateMedusaAdminPassword({
+            namespace: store.namespace,
+            storeId: store.id,
+            adminEmail: creds.email,
+            currentPassword: creds.password,
+            newPassword,
+          });
+        } else if (store.engine === 'woocommerce') {
+          success = await storeSetupService.updateWooCommerceAdminPassword({
+            namespace: store.namespace,
+            storeId: store.id,
+            adminUsername: creds.username || 'admin',
+            newPassword,
+          });
+        }
 
         if (success) {
           // Update stored credentials with new password

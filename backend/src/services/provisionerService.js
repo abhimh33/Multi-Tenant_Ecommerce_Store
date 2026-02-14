@@ -192,17 +192,30 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
 
     if (store.engine === 'woocommerce') {
       const dbRootPassword = crypto.randomBytes(16).toString('base64url');
+
+      // Resolve the tenant user's email so the WP admin is synced
+      let tenantEmail = 'admin@example.com';
+      try {
+        const tenantUser = await userService.findById(store.ownerId);
+        if (tenantUser && tenantUser.email) {
+          tenantEmail = tenantUser.email;
+          logger.info('Syncing tenant email as WordPress admin', { storeId, email: tenantEmail });
+        }
+      } catch (_lookupErr) {
+        logger.warn('Could not resolve tenant user, using default email', { storeId, ownerId: store.ownerId });
+      }
+
       credentials = {
         adminUsername: 'admin',
         adminPassword,
-        adminEmail: 'admin@example.com',
+        adminEmail: tenantEmail,
         dbPassword,
         dbRootPassword,
       };
       setValues = {
         'wordpress.admin.password': adminPassword,
         'wordpress.admin.username': 'admin',
-        'wordpress.admin.email': 'admin@example.com',
+        'wordpress.admin.email': tenantEmail,
         'wordpress.theme': store.theme || 'storefront',
         'mariadb.rootPassword': dbRootPassword,
         'mariadb.password': dbPassword,
@@ -364,7 +377,7 @@ async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
     const adminCredentialsPayload = store.engine === 'medusa'
       ? { email: credentials.adminEmail, password: credentials.adminPassword }
       : store.engine === 'woocommerce'
-        ? { username: credentials.adminUsername, password: credentials.adminPassword }
+        ? { email: credentials.adminEmail, username: credentials.adminUsername, password: credentials.adminPassword }
         : {};
 
     store = await storeRegistry.update(storeId, {
