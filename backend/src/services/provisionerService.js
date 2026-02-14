@@ -24,7 +24,12 @@ const {
   provisioningStepDuration,
   provisioningFailures,
   activeProvisioningOps,
+  provisioningQueueDepth,
+  provisioningConcurrent,
+  provisioningQueueWaitMs,
+  provisioningRejections,
 } = require('../utils/metrics');
+const { Semaphore } = require('../utils/semaphore');
 
 /**
  * Provisioner Service — the central orchestrator for store lifecycle.
@@ -95,6 +100,23 @@ async function timedStep(storeId, engine, phase, correlationId, fn) {
 // In-progress provisioning operations — prevents concurrent provision of same store
 const activeOperations = new Map();
 
+// ─── Provisioning Concurrency Semaphore ──────────────────────────────────────
+// Limits parallel Helm installs / deletes to prevent resource exhaustion.
+// Environment-configurable via PROVISIONING_MAX_CONCURRENT and PROVISIONING_MAX_QUEUE.
+const provisioningSemaphore = new Semaphore({
+  maxConcurrent: parseInt(process.env.PROVISIONING_MAX_CONCURRENT, 10) || 3,
+  maxQueueSize: parseInt(process.env.PROVISIONING_MAX_QUEUE, 10) || 10,
+  acquireTimeoutMs: parseInt(process.env.PROVISIONING_QUEUE_TIMEOUT_MS, 10) || 120000,
+  name: 'provisioning',
+});
+
+/** Update semaphore metrics snapshot */
+function updateSemaphoreMetrics() {
+  const s = provisioningSemaphore.stats();
+  provisioningQueueDepth.set({}, s.queued);
+  provisioningConcurrent.set({}, s.active);
+}
+
 /**
  * Create a new store.
  * Validates limits, creates DB record, then kicks off async provisioning.
@@ -163,6 +185,14 @@ async function createStore({ name, engine, ownerId = 'default', theme, tenantPas
   // Pass correlationId for end-to-end request traceability across async work
   provisionStoreAsync(storeId, { tenantPassword, correlationId }).catch(err => {
     logger.error('Unhandled provisioning error', { storeId, error: err.message });
+    // If the error is a semaphore rejection, mark the store as failed immediately
+    if (err.code === 'PROVISIONING_QUEUE_FULL' || err.code === 'PROVISIONING_QUEUE_TIMEOUT') {
+      provisioningRejections.inc({ reason: err.code === 'PROVISIONING_QUEUE_FULL' ? 'queue_full' : 'queue_timeout' });
+      storeRegistry.update(storeId, {
+        status: STATES.FAILED,
+        failureReason: err.message,
+      }).catch(() => {});
+    }
   });
 
   return store;
@@ -188,6 +218,32 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
   }
   activeOperations.set(storeId, Date.now());
   const cid = correlationId || `async-${storeId}`;
+
+  // ── Acquire semaphore slot (limits global concurrency) ──
+  let release;
+  try {
+    updateSemaphoreMetrics();
+    logger.info('[lifecycle] Waiting for provisioning slot', {
+      storeId, correlationId: cid,
+      semaphore: provisioningSemaphore.stats(),
+    });
+    const permit = await provisioningSemaphore.acquire();
+    release = permit.release;
+    const waitMs = permit.waitMs;
+
+    provisioningQueueWaitMs.observe({}, waitMs);
+    updateSemaphoreMetrics();
+
+    if (waitMs > 0) {
+      logger.info('[lifecycle] Provisioning slot acquired after queuing', {
+        storeId, correlationId: cid, waitMs,
+      });
+    }
+  } catch (semErr) {
+    activeOperations.delete(storeId);
+    updateSemaphoreMetrics();
+    throw semErr; // propagate to caller for FAILED marking
+  }
 
   try {
     let store = await storeRegistry.findById(storeId);
@@ -239,13 +295,7 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
       )
     );
 
-    // Step 3: Install Helm chart
-    await auditService.log({
-      storeId,
-      eventType: 'helm_install',
-      message: `Installing Helm release '${store.helmRelease}'`,
-      metadata: { engine: store.engine, namespace: store.namespace, correlationId: cid },
-    });
+    // Step 3: Generate credentials and install Helm chart
 
     // Generate random credentials for this store (engine-aware)
     const adminPassword = tenantPassword || crypto.randomBytes(12).toString('base64url');
@@ -320,17 +370,47 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
       };
     }
 
-    await timedStep(storeId, store.engine, PHASES.HELM_INSTALL, cid, () =>
-      retryWithBackoff(
-        () => helmService.install({
-          releaseName: store.helmRelease,
-          namespace: store.namespace,
-          engine: store.engine,
-          setValues,
-        }),
-        { maxRetries: 1, operationName: 'helmInstall' }
-      )
-    );
+    // ── Duplicate Helm release guard (race condition defense) ──
+    // Check if a Helm release already exists before attempting install
+    const existingRelease = await helmService.status(store.helmRelease, store.namespace);
+    if (existingRelease && existingRelease?.info?.status === 'deployed') {
+      logger.warn('[lifecycle] Helm release already deployed — skipping install (race condition guard)', {
+        storeId, helmRelease: store.helmRelease, correlationId: cid,
+      });
+      await auditService.log({
+        storeId,
+        eventType: 'info',
+        message: `Helm release '${store.helmRelease}' already deployed — skipping install (duplicate guard)`,
+        metadata: { correlationId: cid },
+      });
+    } else {
+      // Clean up non-deployed leftover release if present
+      if (existingRelease) {
+        logger.info('[lifecycle] Existing release not deployed — cleaning up before install', {
+          storeId, status: existingRelease?.info?.status,
+        });
+        await helmService.uninstall({ releaseName: store.helmRelease, namespace: store.namespace });
+      }
+
+      await auditService.log({
+        storeId,
+        eventType: 'helm_install',
+        message: `Installing Helm release '${store.helmRelease}'`,
+        metadata: { engine: store.engine, namespace: store.namespace, correlationId: cid },
+      });
+
+      await timedStep(storeId, store.engine, PHASES.HELM_INSTALL, cid, () =>
+        retryWithBackoff(
+          () => helmService.install({
+            releaseName: store.helmRelease,
+            namespace: store.namespace,
+            engine: store.engine,
+            setValues,
+          }),
+          { maxRetries: 1, operationName: 'helmInstall' }
+        )
+      );
+    }
 
     // Step 4: Poll for readiness
     await auditService.log({
@@ -361,6 +441,29 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
 
       throw new ProvisioningError(reason, { retryable: readiness.timedOut });
     }
+
+    // Step 4b: Verify ResourceQuota and LimitRange enforcement
+    const boundaries = await k8sService.verifyResourceBoundaries(store.namespace);
+    if (boundaries.quotaEnforced && boundaries.limitRangeEnforced) {
+      logger.info('[lifecycle] Resource boundaries verified', {
+        storeId, correlationId: cid,
+        quota: boundaries.quota?.name,
+        limitRange: boundaries.limitRange?.name,
+      });
+    } else {
+      logger.warn('[lifecycle] Resource boundaries incomplete — tenant isolation may be degraded', {
+        storeId, correlationId: cid,
+        quotaEnforced: boundaries.quotaEnforced,
+        limitRangeEnforced: boundaries.limitRangeEnforced,
+      });
+    }
+
+    await auditService.log({
+      storeId,
+      eventType: 'info',
+      message: `Resource boundaries: quota=${boundaries.quotaEnforced ? 'enforced' : 'MISSING'}, limitRange=${boundaries.limitRangeEnforced ? 'enforced' : 'MISSING'}`,
+      metadata: { boundaries, correlationId: cid },
+    });
 
     // Step 5: Engine-specific setup via kubectl exec
     if (store.engine === 'woocommerce') {
@@ -522,6 +625,8 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
   } finally {
     activeOperations.delete(storeId);
     activeProvisioningOps.dec();
+    if (release) release();
+    updateSemaphoreMetrics();
   }
 }
 
@@ -587,6 +692,31 @@ async function deleteStoreAsync(storeId) {
   activeOperations.set(storeId, Date.now());
   const deleteStart = Date.now();
 
+  // ── Acquire semaphore slot (limits global concurrency) ──
+  let release;
+  try {
+    updateSemaphoreMetrics();
+    const permit = await provisioningSemaphore.acquire();
+    release = permit.release;
+    if (permit.waitMs > 0) {
+      provisioningQueueWaitMs.observe({}, permit.waitMs);
+      logger.info('[lifecycle] Deletion slot acquired after queuing', {
+        storeId, waitMs: permit.waitMs,
+      });
+    }
+    updateSemaphoreMetrics();
+  } catch (semErr) {
+    activeOperations.delete(storeId);
+    updateSemaphoreMetrics();
+    // For deletions, don't reject — log and fail the store
+    logger.error('[lifecycle] Deletion queued too long or rejected', { storeId, error: semErr.message });
+    await storeRegistry.update(storeId, {
+      status: STATES.FAILED,
+      failureReason: `Deletion deferred: ${semErr.message}`,
+    }).catch(() => { });
+    return;
+  }
+
   try {
     const store = await storeRegistry.findById(storeId);
     if (!store) throw new NotFoundError('Store', storeId);
@@ -595,22 +725,30 @@ async function deleteStoreAsync(storeId) {
       storeId, engine: store.engine,
     });
 
-    // Step 1: Uninstall Helm release
-    await auditService.log({
-      storeId,
-      eventType: 'helm_uninstall',
-      message: `Uninstalling Helm release '${store.helmRelease}'`,
-    });
+    // ── Duplicate release guard: verify Helm release still exists ──
+    const existingRelease = await helmService.status(store.helmRelease, store.namespace);
+    if (!existingRelease) {
+      logger.info('[lifecycle] Helm release already absent — skipping uninstall', {
+        storeId, helmRelease: store.helmRelease,
+      });
+    } else {
+      // Step 1: Uninstall Helm release
+      await auditService.log({
+        storeId,
+        eventType: 'helm_uninstall',
+        message: `Uninstalling Helm release '${store.helmRelease}'`,
+      });
 
-    await timedStep(storeId, store.engine, PHASES.HELM_UNINSTALL, `delete-${storeId}`, () =>
-      retryWithBackoff(
-        () => helmService.uninstall({
-          releaseName: store.helmRelease,
-          namespace: store.namespace,
-        }),
-        { maxRetries: 2, operationName: 'helmUninstall' }
-      )
-    );
+      await timedStep(storeId, store.engine, PHASES.HELM_UNINSTALL, `delete-${storeId}`, () =>
+        retryWithBackoff(
+          () => helmService.uninstall({
+            releaseName: store.helmRelease,
+            namespace: store.namespace,
+          }),
+          { maxRetries: 2, operationName: 'helmUninstall' }
+        )
+      );
+    }
 
     // Step 2: Delete namespace
     await auditService.log({
@@ -677,6 +815,8 @@ async function deleteStoreAsync(storeId) {
 
   } finally {
     activeOperations.delete(storeId);
+    if (release) release();
+    updateSemaphoreMetrics();
   }
 }
 
@@ -895,6 +1035,17 @@ function isOperationInProgress(storeId) {
   return activeOperations.has(storeId);
 }
 
+/**
+ * Get provisioning concurrency stats for health/metrics endpoints.
+ * @returns {Object}
+ */
+function getConcurrencyStats() {
+  return {
+    ...provisioningSemaphore.stats(),
+    activeOperations: activeOperations.size,
+  };
+}
+
 module.exports = {
   createStore,
   deleteStore,
@@ -904,4 +1055,5 @@ module.exports = {
   getStoreLogs,
   recoverStuckStores,
   isOperationInProgress,
+  getConcurrencyStats,
 };

@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/pool');
 const k8sService = require('../services/kubernetesService');
+const provisionerService = require('../services/provisionerService');
 
 /**
  * Health Routes — /api/v1/health
@@ -34,12 +35,16 @@ router.get('/', async (req, res) => {
 
   const overallHealthy = Object.values(checks).every(c => c.status === 'healthy');
 
+  // Include provisioning concurrency stats
+  const concurrency = provisionerService.getConcurrencyStats();
+
   res.status(overallHealthy ? 200 : 503).json({
     requestId: req.requestId,
     status: overallHealthy ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
     checks,
+    concurrency,
   });
 });
 

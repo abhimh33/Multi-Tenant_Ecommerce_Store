@@ -176,6 +176,31 @@ const securityEvents = new Counter(
   ['event_type']
 );
 
+const provisioningQueueDepth = new Gauge(
+  'provisioning_queue_depth',
+  'Number of store operations waiting in the provisioning queue',
+  []
+);
+
+const provisioningConcurrent = new Gauge(
+  'provisioning_concurrent_operations',
+  'Number of store operations currently executing in parallel',
+  []
+);
+
+const provisioningQueueWaitMs = new Histogram(
+  'provisioning_queue_wait_ms',
+  'Time spent waiting in the provisioning queue before execution (ms)',
+  [],
+  [0, 100, 500, 1000, 5000, 10000, 30000, 60000, 120000]
+);
+
+const provisioningRejections = new Counter(
+  'provisioning_rejections_total',
+  'Total provisioning requests rejected due to queue full or timeout',
+  ['reason']
+);
+
 const processUptimeSeconds = new Gauge(
   'process_uptime_seconds',
   'Process uptime in seconds',
@@ -236,6 +261,10 @@ function serializeMetrics() {
     provisioningFailures,
     securityEvents,
     activeProvisioningOps,
+    provisioningQueueDepth,
+    provisioningConcurrent,
+    provisioningQueueWaitMs,
+    provisioningRejections,
     processUptimeSeconds,
   ];
 
@@ -255,6 +284,10 @@ module.exports = {
   provisioningFailures,
   securityEvents,
   activeProvisioningOps,
+  provisioningQueueDepth,
+  provisioningConcurrent,
+  provisioningQueueWaitMs,
+  provisioningRejections,
   processUptimeSeconds,
   // Utilities
   metricsMiddleware,

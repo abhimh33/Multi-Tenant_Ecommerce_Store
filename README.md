@@ -488,6 +488,11 @@ Every API request is scoped to the authenticated user's JWT. Tenant isolation is
 | **Crash recovery** | On startup, stores stuck in `requested`/`provisioning` → `failed` (with duration); `deleting` → resumed |
 | **Correlation IDs** | HTTP `requestId` propagated through async provisioning workflow for end-to-end traceability |
 | **Per-step timing** | Each provisioning step (namespace, helm, pods, engine setup) is individually timed and logged |
+| **Provisioning semaphore** | Global concurrency limit on parallel provisions/deletions (`PROVISIONING_MAX_CONCURRENT=3`); excess requests are queued up to `PROVISIONING_MAX_QUEUE=10`, then rejected with 503 |
+| **Queue metrics** | Queue depth, wait time histogram, rejection counter, and concurrent-operation gauge exposed via `/metrics` |
+| **Duplicate Helm guard** | Before `helm install`, checks `helm status` — skips install if release is already `deployed` (race condition defense) |
+| **ResourceQuota check** | After Helm install, verifies namespace-level ResourceQuota and LimitRange are enforced; logs warning if missing |
+| **Deletion cleanup** | Helm release existence verified before uninstall; namespace + PVC removal confirmed via polling loop |
 | **Security headers** | Helmet with custom CSP, HSTS with preload, X-Frame-Options DENY, strict Referrer-Policy |
 | **CORS** | Multi-origin support with credentials in production |
 | **Log redaction** | Helm `--set` args containing passwords/secrets are redacted before debug logging |
@@ -522,6 +527,10 @@ Accessible at `GET /api/v1/metrics` (requires admin JWT):
 | `store_provisioning_step_duration_ms` | Histogram | engine, step | Per-step provisioning time |
 | `store_provisioning_failures_total` | Counter | engine, step | Failures by step |
 | `active_provisioning_operations` | Gauge | — | In-flight provisioning count |
+| `provisioning_concurrent_operations` | Gauge | — | Current parallel Helm operations |
+| `provisioning_queue_depth` | Gauge | — | Operations waiting in semaphore queue |
+| `provisioning_queue_wait_ms` | Histogram | — | Time spent waiting in queue |
+| `provisioning_rejections_total` | Counter | reason | Rejections: `queue_full`, `queue_timeout` |
 | `security_events_total` | Counter | event_type | Login, lockout, rate limit events |
 | `process_uptime_seconds` | Gauge | — | Process uptime |
 
@@ -542,6 +551,15 @@ Security events are logged to the same `audit_logs` table as store lifecycle eve
 
 The current architecture is designed for single-instance operation (Docker Desktop / single VPS). Here's the documented path to horizontal scaling:
 
+### Stateless JWT Authentication
+
+The backend uses **stateless JWT tokens** for authentication — no server-side session storage. This means:
+
+- **Any API replica can validate any request** — the JWT signature is verified using a shared `JWT_SECRET` environment variable.
+- **No sticky sessions required** — a load balancer can round-robin requests freely across replicas.
+- **No session store dependency** — Redis/Memcached is not needed for auth (only for rate limiting in multi-instance mode).
+- **Token-based scaling**: Deploy N replicas behind a load balancer; set the same `JWT_SECRET` on all instances.
+
 ### API Layer (Stateless)
 
 The Express backend is **nearly stateless** — scale horizontally behind a load balancer with these considerations:
@@ -552,11 +570,49 @@ The Express backend is **nearly stateless** — scale horizontally behind a load
 | **Account lockout** | In-memory `Map` | Redis or DB-backed lockout table |
 | **Creation cooldown** | In-memory `Map` | Redis key with TTL |
 | **Session/JWT** | Stateless JWT | No change needed |
+| **Provisioning semaphore** | In-memory `Semaphore` | DB advisory locks + leader election |
 | **Health probes** | `/health/live` | Use for load balancer health checks |
 
-### Provisioning Concurrency
+### Provisioning Concurrency Control
 
-The `activeOperations` Map prevents concurrent provisioning of the same store **within one process**. For multi-instance:
+The provisioning system uses a **two-layer concurrency control**:
+
+1. **Global semaphore** (`Semaphore` class): Limits the total number of parallel Helm installs/deletes to `PROVISIONING_MAX_CONCURRENT` (default: 3). Excess requests are queued (up to `PROVISIONING_MAX_QUEUE=10`) and rejected with 503 when the queue is full.
+2. **Per-store guard** (`activeOperations` Map): Prevents concurrent operations on the *same* store (e.g., two provisioning attempts for the same store ID).
+
+```
+                    ┌─────────────────────┐
+                    │  HTTP Request       │
+                    │  POST /stores       │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │  DB: Create record  │
+                    │  (REQUESTED state)  │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────▼──────────┐
+          ┌────────│  Semaphore.acquire() │────────┐
+          │ Full   │  maxConcurrent=3     │ OK     │
+          │        │  maxQueue=10         │        │
+          │        └──────────────────────┘        │
+          ▼                                        ▼
+  ┌───────────────┐                    ┌───────────────────┐
+  │  503 Rejected │                    │  provisionAsync() │
+  │  Store→FAILED │                    │  namespace → helm │
+  └───────────────┘                    │  → pods → setup   │
+                                       │  → READY          │
+                                       └───────────────────┘
+```
+
+**Environment variables**:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROVISIONING_MAX_CONCURRENT` | 3 | Max parallel Helm operations |
+| `PROVISIONING_MAX_QUEUE` | 10 | Max pending operations before rejection |
+| `PROVISIONING_QUEUE_TIMEOUT_MS` | 120000 | Max queue wait time (2 min) |
+
+For multi-instance scaling:
 
 1. **DB-level locking**: Use PostgreSQL advisory locks (`pg_advisory_xact_lock(store_id_hash)`) before starting provisioning
 2. **Optimistic locking** (already implemented): The `expectedStatus` guard ensures only one instance wins the state transition
@@ -624,8 +680,9 @@ These items are documented and accepted trade-offs for the current scope:
 | ID | Description | Impact |
 |----|-------------|--------|
 | **F10** | No PostgreSQL Row-Level Security (RLS) | Tenant isolation is enforced at the application layer (all queries filter by `owner_id`). RLS would add defense-in-depth but is not required for the current single-backend architecture. |
-| **F11** | Creation cooldown uses an in-memory `Map` | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed cooldown to prevent cross-instance bypass. See [Horizontal Scaling Strategy](#horizontal-scaling-strategy) for the migration path. |
+| **F11** | Creation cooldown and rate limiter use in-memory `Map`s | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed store. The provisioning semaphore is similarly in-process. See [Horizontal Scaling Strategy](#horizontal-scaling-strategy) for the migration path. |
 | ~~**F12**~~ | ~~`requestId` not propagated to async provisioning logs~~ | **Resolved** — `correlationId` is now propagated from the HTTP request through all async provisioning steps, including per-step timing logs. |
+| **F13** | Provisioning semaphore is in-process only | The semaphore limits concurrency within a single Node.js process. Multi-instance deployments would need PostgreSQL advisory locks or a distributed semaphore (Redis/etcd). Documented in [Horizontal Scaling Strategy](#horizontal-scaling-strategy). |
 
 ## MedusaJS Storefront SPA
 

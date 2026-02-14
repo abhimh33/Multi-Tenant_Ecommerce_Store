@@ -445,6 +445,64 @@ async function pollForReadiness(namespace, options = {}) {
   };
 }
 
+/**
+ * Verify that ResourceQuota and LimitRange are enforced in a namespace.
+ * Used after Helm install to confirm tenant resource boundaries are in place.
+ * @param {string} namespace
+ * @returns {Promise<{ quotaEnforced: boolean, limitRangeEnforced: boolean, quota: Object|null, limitRange: Object|null }>}
+ */
+async function verifyResourceBoundaries(namespace) {
+  ensureClient();
+  let quota = null;
+  let limitRange = null;
+
+  try {
+    const quotaRes = await coreApi.listNamespacedResourceQuota(namespace);
+    const quotaItems = quotaRes.body?.items || quotaRes.items || [];
+    if (quotaItems.length > 0) {
+      const q = quotaItems[0];
+      quota = {
+        name: q.metadata?.name,
+        hard: q.spec?.hard || {},
+        used: q.status?.used || {},
+      };
+    }
+  } catch (err) {
+    if (err.statusCode !== 404) {
+      logger.warn('Failed to check ResourceQuota', { namespace, error: err.message });
+    }
+  }
+
+  try {
+    const lrRes = await coreApi.listNamespacedLimitRange(namespace);
+    const lrItems = lrRes.body?.items || lrRes.items || [];
+    if (lrItems.length > 0) {
+      const lr = lrItems[0];
+      limitRange = {
+        name: lr.metadata?.name,
+        limits: (lr.spec?.limits || []).map(l => ({
+          type: l.type,
+          default: l.default,
+          defaultRequest: l.defaultRequest,
+          max: l.max,
+          min: l.min,
+        })),
+      };
+    }
+  } catch (err) {
+    if (err.statusCode !== 404) {
+      logger.warn('Failed to check LimitRange', { namespace, error: err.message });
+    }
+  }
+
+  return {
+    quotaEnforced: quota !== null,
+    limitRangeEnforced: limitRange !== null,
+    quota,
+    limitRange,
+  };
+}
+
 module.exports = {
   initClient,
   createNamespace,
@@ -454,6 +512,7 @@ module.exports = {
   checkPodsReady,
   checkJobsComplete,
   verifyCleanup,
+  verifyResourceBoundaries,
   getIngresses,
   healthCheck,
   pollForReadiness,
