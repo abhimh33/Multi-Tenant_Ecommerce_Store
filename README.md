@@ -11,6 +11,9 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 - **Tenant isolation**: JWT-based authentication with role-based access control (admin/tenant)
 - **Audit logging**: Full event history for every store
 - **Automated setup**: Post-provisioning configuration via kubectl exec (WP-CLI for WooCommerce, Medusa CLI for MedusaJS)
+- **WooCommerce storefront**: Theme selection (Astra / Storefront), seeded products, Cash-on-Delivery checkout, end-to-end order flow
+- **MedusaJS storefront SPA**: Standalone React + Vite + Tailwind CSS storefront consuming Medusa Store API v1 — hero, product catalog, cart drawer, 3-step checkout, order confirmation
+- **Per-tenant branding**: Storefronts are configurable per tenant via environment variables (`VITE_STORE_NAME`, `VITE_MEDUSA_BACKEND_URL`)
 
 ## System Design & Tradeoffs
 
@@ -26,81 +29,142 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                React Dashboard (Frontend)           │
-│       Store creation, management, audit logs        │
-└──────────────────┬──────────────────────────────────┘
-                   │ REST API (JWT auth)
-┌──────────────────▼──────────────────────────────────┐
-│            Node.js Control Plane (Backend)          │
-│   Express · PostgreSQL · Kubernetes Client · Helm   │
-│   ┌──────────────────────────────────────────────┐  │
-│   │ Services: Provisioner · Helm · K8s · Setup  │  │
-│   │ State Machine · Audit · Guardrails          │  │
-│   └──────────────────────────────────────────────┘  │
-└──────────────────┬──────────────────────────────────┘
-                   │ kubectl / helm CLI
-┌──────────────────▼──────────────────────────────────┐
-│              Kubernetes Cluster                     │
-│   ┌────────────────────────────────────────────┐    │
-│   │ Namespace: store-abc12345 (WooCommerce)    │    │
-│   │  - WordPress Pod                           │    │
-│   │  - MariaDB StatefulSet + PVC               │    │
-│   │  - Ingress (store-abc12345.localhost)      │    │
-│   └────────────────────────────────────────────┘    │
-│   ┌────────────────────────────────────────────┐    │
-│   │ Namespace: store-xyz98765 (MedusaJS)       │    │
-│   │  - Medusa Pod                              │    │
-│   │  - PostgreSQL StatefulSet + PVC            │    │
-│   │  - Ingress (store-xyz98765.localhost)      │    │
-│   └────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          User-Facing Layer                             │
+│                                                                        │
+│   ┌────────────────────────┐     ┌──────────────────────────────────┐  │
+│   │   React Dashboard      │     │   MedusaJS Storefront SPA       │  │
+│   │   (frontend/)           │     │   (storefront-medusa/)           │  │
+│   │                         │     │                                  │  │
+│   │  Store CRUD, audit logs │     │  Hero, products, cart drawer,   │  │
+│   │  user auth, monitoring  │     │  3-step checkout, order confirm │  │
+│   │  :5173                  │     │  React 18 · Tailwind · Vite     │  │
+│   └───────────┬─────────────┘     │  :3000 (dev) / nginx (prod)     │  │
+│               │                    └──────────┬───────────────────────┘  │
+│               │ REST API (JWT)                │ Medusa Store API v1     │
+└───────────────┼───────────────────────────────┼──────────────────────────┘
+                │                               │
+┌───────────────▼───────────────────────────────┼──────────────────────────┐
+│            Node.js Control Plane (Backend)    │                          │
+│            Express · PostgreSQL · Helm CLI    │                          │
+│   ┌──────────────────────────────────────┐    │                          │
+│   │ Provisioner · Helm · K8s · Setup    │    │                          │
+│   │ State Machine · Audit · Guardrails  │    │                          │
+│   │ Circuit Breaker · Retry · Metrics   │    │                          │
+│   └──────────────────────────────────────┘    │                          │
+│            :3001                              │                          │
+└───────────────┬───────────────────────────────┼──────────────────────────┘
+                │ kubectl / helm CLI            │
+┌───────────────▼───────────────────────────────▼──────────────────────────┐
+│                        Kubernetes Cluster                                │
+│                                                                          │
+│   ┌──────────────────────────────────────────────────────────────┐       │
+│   │ Namespace: store-abc12345 (WooCommerce)                      │       │
+│   │                                                              │       │
+│   │  ┌──────────────────┐  ┌────────────────────┐                │       │
+│   │  │  WordPress Pod   │  │  MariaDB           │                │       │
+│   │  │  WP 6.7 + PHP8.2 │  │  StatefulSet + PVC │                │       │
+│   │  │  WooCommerce 9.5 │  │  MariaDB 11.4      │                │       │
+│   │  │  Theme: Astra /  │  └────────────────────┘                │       │
+│   │  │   Storefront     │                                        │       │
+│   │  │  Products + COD  │  Ingress: store-abc12345.localhost     │       │
+│   │  └──────────────────┘                                        │       │
+│   └──────────────────────────────────────────────────────────────┘       │
+│                                                                          │
+│   ┌──────────────────────────────────────────────────────────────┐       │
+│   │ Namespace: store-xyz98765 (MedusaJS)                         │       │
+│   │                                                              │       │
+│   │  ┌──────────────────┐  ┌────────────────────┐                │       │
+│   │  │  Medusa Pod      │  │  PostgreSQL        │                │       │
+│   │  │  v1.20 + Node.js │  │  StatefulSet + PVC │                │       │
+│   │  │  Store API v1    │  │  PG 16 Alpine      │                │       │
+│   │  └──────────────────┘  └────────────────────┘                │       │
+│   │                                                              │       │
+│   │  ┌──────────────────┐  Ingress: store-xyz98765.localhost     │       │
+│   │  │  Storefront Pod  │  (opt-in, storefront.enabled=true)     │       │
+│   │  │  nginx + SPA     │                                        │       │
+│   │  └──────────────────┘                                        │       │
+│   └──────────────────────────────────────────────────────────────┘       │
+│                                                                          │
+│   Per-namespace: NetworkPolicy · ResourceQuota · LimitRange              │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| **Frontend** | React, Vite, TailwindCSS, React Query, Axios |
-| **Backend** | Node.js 20, Express, PostgreSQL, Joi, JWT, Winston |
-| **Infrastructure** | Kubernetes, Helm, Docker, Nginx Ingress (local) / Traefik (k3s) |
-| **E-commerce Engines** | WordPress + WooCommerce + MariaDB, MedusaJS + PostgreSQL |
+| **Dashboard (frontend/)** | React 18, Vite, TailwindCSS, React Query, Axios, shadcn/ui |
+| **MedusaJS Storefront (storefront-medusa/)** | React 18, Vite, Tailwind CSS, React Router v6, TanStack Query, Lucide icons |
+| **Backend** | Node.js 20, Express, PostgreSQL 16, Joi, JWT, Winston, Prometheus metrics |
+| **Infrastructure** | Kubernetes, Helm 3, Docker, Nginx Ingress (local) / Traefik (k3s) |
+| **WooCommerce Engine** | WordPress 6.7 + PHP 8.2, WooCommerce 9.5.2, MariaDB 11.4, WP-CLI 2.11 |
+| **MedusaJS Engine** | Medusa v1.20, Node.js, PostgreSQL 16 Alpine |
 | **Testing** | Jest (unit + integration), service containers |
+| **CI/CD** | GitHub Actions (lint, test, Helm validation, Docker build) |
 
 ## Project Structure
 
 ```
 .
-├── SYSTEM_DESIGN.md       # Architecture decisions & tradeoffs
-├── docker-compose.dev.yml # Local PostgreSQL for development
-├── backend/               # Node.js control plane
+├── SYSTEM_DESIGN.md           # Architecture decisions & tradeoffs
+├── docker-compose.dev.yml     # Local PostgreSQL for development
+├── backend/                   # Node.js control plane
 │   ├── src/
-│   │   ├── controllers/   # HTTP route handlers
-│   │   ├── services/      # Business logic (provisioner, helm, k8s, setup, audit)
-│   │   ├── middleware/    # Auth, validation, error handling
-│   │   ├── db/            # PostgreSQL client, migrations
-│   │   └── utils/         # Logger, state machine
-│   ├── tests/             # Unit + integration tests
+│   │   ├── controllers/       # HTTP route handlers (auth, stores)
+│   │   ├── services/          # Business logic
+│   │   │   ├── provisionerService.js   # Store lifecycle orchestrator
+│   │   │   ├── helmService.js          # Helm CLI wrapper
+│   │   │   ├── kubernetesService.js    # K8s namespace/pod management
+│   │   │   ├── storeSetupService.js    # WP-CLI / Medusa post-install setup
+│   │   │   ├── auditService.js         # Event audit trail
+│   │   │   └── storeRegistry.js        # PostgreSQL store CRUD
+│   │   ├── middleware/        # Auth, validation, error handling, rate limiting
+│   │   ├── models/            # Store state machine (storeMachine.js)
+│   │   ├── db/                # PostgreSQL pool, migrations, seed
+│   │   └── utils/             # Logger, circuit breaker, retry, metrics, errors
+│   ├── tests/                 # Unit + integration tests (Jest)
 │   ├── Dockerfile
 │   └── package.json
-├── frontend/              # React dashboard
+├── frontend/                  # React admin dashboard (port 5173)
 │   ├── src/
-│   │   ├── pages/         # CreateStore, StoreList, StoreDetail, Login, Register
-│   │   ├── components/    # UI components (shadcn/ui)
-│   │   └── services/      # API client (axios)
+│   │   ├── pages/             # CreateStore, StoreList, StoreDetail, Login, etc.
+│   │   ├── components/ui/     # UI components (shadcn/ui)
+│   │   ├── context/           # AuthContext (JWT)
+│   │   ├── layouts/           # AuthLayout, DashboardLayout
+│   │   └── services/          # API client (axios)
 │   ├── Dockerfile
 │   └── package.json
+├── storefront-medusa/         # MedusaJS storefront SPA (port 3000)
+│   ├── src/
+│   │   ├── api/               # Medusa Store API v1 client (pure fetch)
+│   │   ├── components/
+│   │   │   ├── layout/        # Navbar, Footer, CartDrawer, StoreLayout
+│   │   │   ├── home/          # Hero, FeaturedProducts, CategoryGrid, PromoBar
+│   │   │   └── products/      # ProductCard, ProductGrid, ProductFilter
+│   │   ├── context/           # CartContext (localStorage), StoreContext
+│   │   ├── pages/             # Home, Products, ProductDetail, Checkout,
+│   │   │                      #   OrderConfirmation, Collections
+│   │   └── lib/               # Utility helpers (formatPrice, cn, etc.)
+│   ├── Dockerfile             # Multi-stage (node build → nginx serve)
+│   └── package.json
+├── docker/
+│   └── medusa/                # Custom Medusa backend Docker image
 ├── helm/
-│   └── ecommerce-store/   # Unified Helm chart
+│   └── ecommerce-store/       # Unified Helm chart
 │       ├── templates/
-│       │   ├── woocommerce/   # WordPress, MariaDB, Ingress
-│       │   └── medusa/        # Medusa, PostgreSQL, Secrets, Ingress
+│       │   ├── woocommerce/   # WordPress Deployment, MariaDB StatefulSet, Ingress
+│       │   ├── medusa/        # Medusa Deployment, PostgreSQL StatefulSet,
+│       │   │                  #   Storefront Deployment/Service (opt-in), Ingress
+│       │   ├── network-policy.yaml
+│       │   ├── resource-quota.yaml
+│       │   └── limit-range.yaml
 │       ├── values.yaml        # Defaults
 │       ├── values-local.yaml  # Docker Desktop overrides
 │       └── values-vps.yaml    # K3s production overrides
 └── .github/
     └── workflows/
-        └── ci.yml         # GitHub Actions CI pipeline
+        └── ci.yml             # GitHub Actions CI pipeline
 ```
 
 ## Getting Started
@@ -182,6 +246,8 @@ After the store reaches **ready** status the automated setup has already install
 6. To verify in the admin panel, visit `http://store-<id>.localhost/wp-admin` and go to **WooCommerce → Orders**
 
 > **MedusaJS stores**: The admin panel is available at port 9000 (`/app`). Use the admin credentials shown in the store detail page to log in, create products, and manage orders through the Medusa admin UI.
+>
+> **MedusaJS Storefront SPA**: A standalone React storefront is available in `storefront-medusa/`. It consumes the Medusa Store API v1 and can be deployed alongside any Medusa store. See the [Storefront section](#medusajs-storefront-spa) below for details.
 
 #### 6. Delete a Store
 
@@ -425,6 +491,72 @@ These items are documented and accepted trade-offs for the current scope:
 | **F10** | No PostgreSQL Row-Level Security (RLS) | Tenant isolation is enforced at the application layer (all queries filter by `owner_id`). RLS would add defense-in-depth but is not required for the current single-backend architecture. |
 | **F11** | Creation cooldown uses an in-memory `Map` | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed cooldown to prevent cross-instance bypass. |
 | **F12** | `requestId` not propagated to async provisioning logs | Provisioning runs as a background fire-and-forget task after the HTTP response; the original request context is not carried into those log entries. |
+
+## MedusaJS Storefront SPA
+
+The `storefront-medusa/` directory contains a **standalone React storefront** designed to work with any Medusa v1.x backend. It is fully decoupled from the control plane and communicates exclusively through the Medusa Store API.
+
+### Pages & Components
+
+| Page | Description |
+|------|-------------|
+| **Home** | Hero section with stats, featured products grid, collection cards, perks banner + newsletter CTA |
+| **Products** | Full catalog with text search, collection/category chip filters, sort dropdown, pagination |
+| **Product Detail** | Image gallery with thumbnails, variant option selector, quantity picker, add-to-cart animation, trust badges |
+| **Checkout** | 3-step flow: contact/address → shipping method → payment review → place order |
+| **Order Confirmation** | Order summary with items, totals, shipping address, payment info |
+| **Collections** | Browse all available collections with gradient cards |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Pure fetch API client** (no Medusa SDK) | Zero vendor lock-in; small bundle; works with any Medusa v1.x backend |
+| **Cart in localStorage** | Survives page refreshes; cart ID stored as `medusa_cart_id` and rehydrated from Medusa API on load |
+| **Context API** (not Redux) | Sufficient for cart + store state; avoids extra dependency |
+| **Tailwind + custom design tokens** | `brand` and `surface` color scales, `Inter` + `Plus Jakarta Sans` fonts for easy per-tenant branding |
+| **Env-driven branding** | `VITE_STORE_NAME` and `VITE_MEDUSA_BACKEND_URL` make each deployment tenant-specific |
+
+### Running Locally
+
+```bash
+cd storefront-medusa
+npm install
+
+# Point to a running Medusa backend (default: http://localhost:9000)
+cp .env.example .env
+# Edit VITE_MEDUSA_BACKEND_URL if needed
+
+npm run dev    # http://localhost:3000
+npm run build  # Production build → dist/ (280KB JS + 38KB CSS)
+```
+
+### Docker
+
+```bash
+docker build \
+  --build-arg VITE_MEDUSA_BACKEND_URL=http://medusa:9000 \
+  --build-arg VITE_STORE_NAME="My Store" \
+  -t storefront-medusa:latest \
+  storefront-medusa/
+```
+
+The Dockerfile uses a multi-stage build: Node.js for the Vite build, then nginx to serve the SPA with API proxy and proper client-side routing fallback.
+
+### Helm Integration
+
+The storefront can be deployed alongside a Medusa store by enabling it in `values.yaml`:
+
+```yaml
+storefront:
+  enabled: true
+  image:
+    repository: storefront-medusa
+    tag: latest
+  storeName: "My Store"
+```
+
+This creates a `Deployment` + `Service` for the storefront pod within the same store namespace. The ingress routing (`/` → storefront, `/store/*` → Medusa API) is a planned enhancement.
 
 ## Roadmap
 
