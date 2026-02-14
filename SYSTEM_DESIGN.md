@@ -12,8 +12,12 @@
 4. [Store Lifecycle State Machine](#store-lifecycle-state-machine)
 5. [Idempotency & Failure Handling](#idempotency--failure-handling)
 6. [Cleanup & Recovery](#cleanup--recovery)
-7. [Production Changes Required](#production-changes-required)
-8. [Known Tradeoffs & Accepted Limitations](#known-tradeoffs--accepted-limitations)
+7. [Concurrency Controls](#concurrency-controls)
+8. [Security Posture](#security-posture)
+9. [Observability & Monitoring](#observability--monitoring)
+10. [Scaling Model](#scaling-model)
+11. [Production Environment Differences](#production-environment-differences)
+12. [Known Tradeoffs & Accepted Limitations](#known-tradeoffs--accepted-limitations)
 
 ---
 
@@ -279,9 +283,232 @@ If the namespace was already cleaned up (e.g., manual `kubectl delete ns`), the 
 
 ---
 
-## Production Changes Required
+## Concurrency Controls
 
-Moving from Docker Desktop to a real VPS or cloud environment requires the following changes:
+The platform enforces concurrency limits at two layers to prevent resource exhaustion and race conditions.
+
+### Global Provisioning Semaphore
+
+A `Semaphore` class (`utils/semaphore.js`) limits the total number of parallel Helm install/uninstall operations:
+
+```
+                    ┌─────────────────────┐
+                    │  Provision Request  │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────▼──────────┐
+          ┌────────│  Semaphore.acquire() │────────┐
+          │ Full   │  maxConcurrent = 3   │ OK     │
+          │        │  maxQueue = 10       │        │
+          │        │  timeout = 120s      │        │
+          │        └──────────────────────┘        │
+          ▼                                        ▼
+  ┌───────────────┐                    ┌───────────────────┐
+  │  503 Rejected │                    │  Proceed with     │
+  │  Store→FAILED │                    │  Helm operation   │
+  └───────────────┘                    └───────────────────┘
+```
+
+**Design decisions:**
+- `maxConcurrent=3` (configurable via `PROVISIONING_MAX_CONCURRENT`) — chosen because Helm operations are CPU-heavy and I/O-bound; 3 parallel installs saturate a typical single-node cluster
+- `maxQueue=10` (configurable via `PROVISIONING_MAX_QUEUE`) — queued requests wait for a slot; excess requests are rejected immediately with 503 to provide backpressure
+- `acquireTimeout=120s` (configurable via `PROVISIONING_QUEUE_TIMEOUT_MS`) — prevents indefinite waiting
+- The `drain()` method rejects all queued waiters during graceful shutdown
+
+### Per-Store Operation Guard
+
+An `activeOperations` Map in the provisioner prevents concurrent operations on the same store (e.g., two users triggering provision + delete simultaneously). If a store ID is already in the map, the second operation is rejected.
+
+### Optimistic Locking (Database Level)
+
+All state transitions use `WHERE status = $expectedStatus` in the UPDATE query. If another process changed the store's status concurrently, the UPDATE returns 0 rows and the operation is rejected with a `ConflictError`. This is the final safety net against race conditions.
+
+### Metrics
+
+Concurrency is fully observable via four Prometheus metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `provisioning_concurrent_operations` | Gauge | Current active Helm operations |
+| `provisioning_queue_depth` | Gauge | Requests waiting for a semaphore slot |
+| `provisioning_queue_wait_ms` | Histogram | Time spent waiting in the queue |
+| `provisioning_rejections_total` | Counter | Rejections by reason (`queue_full`, `queue_timeout`) |
+
+---
+
+## Security Posture
+
+Security is enforced at every layer — API, application, infrastructure, and network.
+
+### Authentication & Authorization
+
+| Layer | Mechanism |
+|-------|-----------|
+| **Identity** | JWT tokens signed with `HS256` (`JWT_SECRET`). Stateless — any replica can verify. |
+| **Role model** | Two roles: `admin` (all stores, audit logs, metrics) and `tenant` (own stores only). |
+| **Middleware chain** | `authenticateToken` → verify signature → lookup user → check `isActive` → attach `req.user`. |
+| **Authorization** | `requireRole('admin')` on sensitive routes. All store queries filter by `WHERE owner_id = $jwt_user_id`. |
+
+### Brute-Force Protection
+
+| Guard | Configuration | Scope |
+|-------|--------------|-------|
+| **Login rate limiter** | 10 attempts per 15-min window | Keyed by `IP:email` |
+| **Account lockout** | 5 consecutive failures → 15-min lockout (HTTP 423) | Per email address |
+| **Registration limiter** | 5 registrations per 1 hour | Per IP address |
+| **Store creation cooldown** | 30s between creations per user (admin bypasses) | Per user ID |
+| **Store limit** | Max 5 active stores per user | Per user ID |
+
+All security events are recorded in the audit trail and increment `security_events_total`.
+
+### Input Validation
+
+- Request bodies validated with Joi schemas (`middleware/validators.js`)
+- Store names validated against a 35+ word profanity filter
+- Payloads capped at 256KB (`express.json({ limit: '256kb' })`)
+- Request timeout: 30s default, 10min for provisioning routes
+- Engine validation: only `woocommerce` and `medusa` are accepted
+
+### Infrastructure Security
+
+| Layer | Mechanism |
+|-------|-----------|
+| **Namespace isolation** | Each store in its own K8s namespace — hard resource boundary |
+| **NetworkPolicy** | Default-deny ingress; allow only from ingress controller on 80/443; egress blocks private IP ranges (prevents cross-tenant traffic via internal IPs) |
+| **ResourceQuota** | Per-namespace CPU (2 cores), memory (2Gi), storage (10Gi), pod (10), PVC (5) caps |
+| **LimitRange** | Per-container defaults (250m/256Mi), min (10m/16Mi), max (1 CPU/1Gi) — prevents noisy-neighbor over-allocation |
+| **Kubernetes Secrets** | DB passwords, admin credentials, JWT secrets stored as K8s Secrets (base64-encoded, not plaintext in manifests) |
+| **RBAC** | Optional ServiceAccount + least-privilege ClusterRole per store namespace |
+| **Helm log redaction** | `--set` args containing `password`, `secret` are redacted before debug logging |
+
+### HTTP Security Headers
+
+Applied globally via Helmet middleware:
+
+| Header | Value |
+|--------|-------|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'` |
+
+### Secrets Strategy
+
+Secrets are managed at three levels:
+
+1. **Control plane** (`.env`): `JWT_SECRET`, `DATABASE_URL`. The env validator hard-fails in production/staging if `JWT_SECRET` is the default placeholder value.
+2. **Per-store** (Helm Secrets): MariaDB root/user passwords, WordPress admin password, Medusa JWT/cookie secrets, PostgreSQL password. Generated via `randAlphaNum` in templates or overridable via `--set`.
+3. **Infrastructure**: `KUBECONFIG` (file permissions `600`), TLS certs (cert-manager), Docker registry creds (`imagePullSecrets`).
+
+---
+
+## Observability & Monitoring
+
+### Structured Logging
+
+All logs use Winston with JSON format. Every store lifecycle event includes:
+
+```json
+{
+  "level": "info",
+  "message": "[lifecycle] Step completed: helm_install",
+  "storeId": "store-abc12345",
+  "engine": "medusa",
+  "phase": "helm_install",
+  "correlationId": "req-f7e2b3c4",
+  "durationMs": 8234
+}
+```
+
+- `correlationId` — the HTTP `requestId` that triggered the operation, propagated through all async provisioning steps
+- `durationMs` — per-step execution time for performance analysis
+- `phase` — one of: `namespace_create`, `helm_install`, `pod_readiness`, `engine_setup`, `url_extraction`, `finalize`
+
+### Prometheus Metrics
+
+A custom Prometheus-compatible collector (no external dependencies) exposes 13 metrics at `GET /api/v1/metrics`:
+
+| Category | Metrics |
+|----------|---------|
+| **HTTP** | `http_requests_total` (counter), `http_request_duration_ms` (histogram) |
+| **Stores** | `stores_total` (gauge by status), `store_provisioning_duration_ms` (histogram) |
+| **Provisioning** | `active_provisioning_operations`, `store_provisioning_step_duration_ms`, `store_provisioning_failures_total` |
+| **Concurrency** | `provisioning_concurrent_operations`, `provisioning_queue_depth`, `provisioning_queue_wait_ms`, `provisioning_rejections_total` |
+| **Security** | `security_events_total` (by event type) |
+| **System** | `process_uptime_seconds` |
+
+### Health Probes
+
+Three endpoints designed for Kubernetes integration:
+
+| Endpoint | Purpose | Checks | Failure Response |
+|----------|---------|--------|------------------|
+| `GET /health` | Comprehensive status | DB connectivity + latency, K8s connectivity + latency, concurrency stats | 503 `degraded` |
+| `GET /health/live` | Liveness probe | None (always 200 if process alive) | — |
+| `GET /health/ready` | Readiness probe | DB connectivity, shutdown state | 503 during graceful shutdown |
+
+The `/health/ready` endpoint returns `503` when `process.exitCode` is set (SIGTERM received), allowing load balancers to drain connections before the process exits.
+
+### Audit Trail
+
+Every store lifecycle event and security event is persisted to the `audit_logs` PostgreSQL table:
+
+| Field | Description |
+|-------|-------------|
+| `store_id` | Store affected (null for auth events) |
+| `event` | Event type (`store_created`, `login_success`, `login_failed`, `account_locked`, etc.) |
+| `details` | JSON payload with event-specific data |
+| `created_at` | Timestamp |
+
+The audit log is queryable via `GET /api/v1/audit/logs` (admin) and `GET /api/v1/stores/:id/logs` (owner).
+
+---
+
+## Scaling Model
+
+### Current Architecture (Single Instance)
+
+The platform is designed for single-instance operation, sufficient for tens to low hundreds of stores:
+
+```
+┌──────────┐     ┌──────────┐     ┌──────────────────────┐
+│ Frontend │────▶│ Backend  │────▶│ Kubernetes Cluster   │
+│ (SPA)    │     │ (Express)│     │ (Docker Desktop/k3s) │
+└──────────┘     └────┬─────┘     └──────────────────────┘
+                      │
+                 ┌────▼─────┐
+                 │PostgreSQL│
+                 └──────────┘
+```
+
+- **Stateless JWT** — any replica can validate tokens; no session store
+- **In-memory state** — rate limits, lockouts, cooldowns, and the provisioning semaphore live in-process
+- **Single Helm CLI** — one `helm install/uninstall` at a time per slot
+
+### Horizontal Scaling Path
+
+For multi-instance deployment:
+
+| Component | Current (In-Memory) | Scaled (Distributed) |
+|-----------|--------------------|--------------------|
+| Rate limiting | `express-rate-limit` | Redis store (`rate-limit-redis`) |
+| Account lockout | `Map` | Redis or DB table |
+| Creation cooldown | `Map` | Redis key with TTL |
+| Provisioning semaphore | `Semaphore` class | PostgreSQL advisory locks + leader election |
+| Stuck-store recovery | Runs on every startup | K8s Lease or DB-based leader election |
+
+The optimistic locking on state transitions already works across multiple instances — only one UPDATE will succeed when two instances race.
+
+### Kubernetes as the Scaling Boundary
+
+Provisioned stores scale independently from the control plane. Each store runs in its own namespace with ResourceQuota — adding more stores means adding cluster nodes, not backend instances. The control plane only orchestrates; it does not handle e-commerce traffic.
+
+---
+
+## Production Environment Differences
+
+Moving from Docker Desktop to a real VPS or cloud environment requires changes across six areas.
 
 ### 1. DNS — Wildcard Domain
 
@@ -376,12 +603,14 @@ When enabled, each store namespace gets a dedicated ServiceAccount with least-pr
 
 ## Summary
 
-The platform prioritizes **operational simplicity** and **correctness** over scalability:
+The platform prioritizes **operational simplicity** and **correctness** over premature scalability:
 
-- One namespace per store gives hard isolation boundaries at the infrastructure level
-- A strict state machine with optimistic locking prevents corruption from concurrent operations
-- Fire-and-forget provisioning with stuck-store recovery handles crash scenarios
-- Circuit breakers prevent cascading failures when the cluster is unhealthy
-- Every operation is audited with full event history
+- **Isolation**: One namespace per store provides hard security boundaries via NetworkPolicy, ResourceQuota, and LimitRange
+- **Correctness**: A strict state machine with optimistic locking prevents corruption from concurrent operations
+- **Resilience**: Fire-and-forget provisioning with stuck-store recovery handles crash scenarios; circuit breakers prevent cascading failures
+- **Concurrency**: A two-layer semaphore + per-store guard limits parallel operations with full observability via Prometheus metrics
+- **Security**: JWT auth, brute-force protection, input validation, and infrastructure-level network isolation
+- **Observability**: Structured logging with correlation IDs, 13 Prometheus metrics, three health probe endpoints, and a persistent audit trail
+- **Auditability**: Every lifecycle event and security event is recorded with timestamps and details
 
-For production, the main investments are: managed database, wildcard DNS + TLS, and proper secrets management. The architecture scales comfortably to hundreds of stores on a single cluster without significant changes.
+For production deployment, the main investments are: managed PostgreSQL, wildcard DNS + TLS (cert-manager), proper secrets management, and Redis for distributed rate limiting. The architecture scales comfortably to hundreds of stores on a single cluster without structural changes.

@@ -122,7 +122,7 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 │   │   ├── middleware/        # Auth, validation, error handling, rate limiting
 │   │   ├── models/            # Store state machine (storeMachine.js)
 │   │   ├── db/                # PostgreSQL pool, migrations, seed
-│   │   └── utils/             # Logger, circuit breaker, retry, metrics, errors
+│   │   └── utils/             # Logger, circuit breaker, retry, semaphore, metrics, errors
 │   ├── tests/                 # Unit + integration tests (Jest)
 │   ├── Dockerfile
 │   └── package.json
@@ -505,6 +505,103 @@ Every API request is scoped to the authenticated user's JWT. Tenant isolation is
 | **CORS** | Multi-origin support with credentials in production |
 | **Log redaction** | Helm `--set` args containing passwords/secrets are redacted before debug logging |
 | **DB hardening** | 30s query/statement timeouts, connection retry with backoff, pool size limits |
+
+## Store Lifecycle
+
+### Provisioning Workflow
+
+When a user creates a store via `POST /api/v1/stores`, the following sequence executes:
+
+```
+  HTTP Request                    Database                  Kubernetes
+  ──────────                      ────────                  ──────────
+  POST /stores ──────────▶ INSERT store (REQUESTED) ──▶ 202 Accepted
+                                    │
+                                    ▼ (async)
+                           UPDATE → PROVISIONING
+                                    │
+                                    ├──▶ 1. Create namespace
+                                    ├──▶ 2. helm upgrade --install
+                                    │      (engine-conditional chart)
+                                    ├──▶ 3. Wait for deployment rollout
+                                    ├──▶ 4. Wait for pod readiness
+                                    ├──▶ 5. Post-install setup
+                                    │      WooCommerce: wp core install,
+                                    │        WooCommerce activate, theme,
+                                    │        product seed, COD payment
+                                    │      MedusaJS: medusa user create,
+                                    │        seed data, admin dashboard
+                                    ├──▶ 6. Extract store URL from Ingress
+                                    │
+                                    ▼
+                           UPDATE → READY (with URL)
+```
+
+Each step is wrapped in `retryWithBackoff` (3 attempts, exponential delay + jitter) and the global provisioning semaphore (max 3 concurrent operations).
+
+### Deletion Flow
+
+Deleting a store (`DELETE /api/v1/stores/:id`) removes all Kubernetes resources atomically:
+
+1. Validate ownership (tenant owns the store, or admin)
+2. Validate state machine allows deletion (`canDelete()`)
+3. Transition to `DELETING` with optimistic lock
+4. Acquire semaphore slot
+5. `helm uninstall <release> -n <namespace>` — idempotent (succeeds even if release doesn't exist)
+6. `kubectl delete namespace <namespace>` — idempotent (succeeds even if namespace doesn't exist)
+7. Poll for namespace deletion confirmation
+8. Transition to `DELETED`
+
+If any step fails, the store transitions to `FAILED` and can be retried or deleted again.
+
+### Idempotent Provisioning
+
+- **Duplicate store names**: If a store with the same name + owner exists in `FAILED` state, the existing record is reused (retry path). If it's `READY`, a `ConflictError` is returned.
+- **Duplicate Helm installs**: Before running `helm install`, the provisioner checks `helm status` — if the release is already `deployed`, the install is skipped (race condition defense).
+- **Duplicate deletions**: Both `helm uninstall` and namespace deletion are no-ops on non-existent resources.
+
+### Retry & Recovery
+
+| Scenario | Behavior |
+|----------|----------|
+| **Step failure during provisioning** | Each step retries 3× with exponential backoff (1s → 2s → 4s + jitter). If all retries fail, store transitions to `FAILED`. |
+| **Backend crash during provisioning** | On restart, `recoverStuckStores()` finds stores in `PROVISIONING` → marks `FAILED`. Stores in `REQUESTED` → re-triggers provisioning. Stores in `DELETING` → re-triggers deletion. |
+| **User retry** | `POST /stores/:id/retry` transitions `FAILED → REQUESTED → PROVISIONING` and re-runs the full pipeline. |
+| **Circuit breaker open** | When Helm/K8s calls fail repeatedly, the circuit breaker opens — all new operations fail immediately without calling the external service. After a timeout, one test request is allowed through. |
+
+### ResourceQuota & LimitRange Enforcement
+
+Every provisioned namespace gets a `ResourceQuota` and `LimitRange` applied by Helm:
+
+**ResourceQuota** (per-namespace caps):
+
+| Resource | Default | Local Override | VPS Override |
+|----------|---------|---------------|-------------|
+| CPU requests | 1 core | 1 core | 1 core |
+| CPU limits | 2 cores | 2 cores | 2 cores |
+| Memory requests | 1Gi | 1Gi | 1Gi |
+| Memory limits | 2Gi | 2Gi | 2Gi |
+| PVCs | 5 | 5 | 5 |
+| Storage | 10Gi | 5Gi | 20Gi |
+| Pods | 10 | 10 | 10 |
+| Services | 5 | 5 | 5 |
+
+**LimitRange** (per-container defaults):
+
+| Setting | Default |
+|---------|---------|
+| Default CPU | 250m |
+| Default Memory | 256Mi |
+| Default Request CPU | 50m |
+| Default Request Memory | 64Mi |
+| Max CPU | 1 core |
+| Max Memory | 1Gi |
+| Min CPU | 10m |
+| Min Memory | 16Mi |
+| Min PVC | 100Mi |
+| Max PVC | 5Gi |
+
+After `helm install`, the provisioner verifies that both `ResourceQuota` and `LimitRange` exist in the namespace and logs a warning if either is missing.
 
 ## Observability
 
@@ -1038,11 +1135,10 @@ These items are documented and accepted trade-offs for the current scope:
 
 | ID | Description | Impact |
 |----|-------------|--------|
-| **F10** | No PostgreSQL Row-Level Security (RLS) | Tenant isolation is enforced at the application layer (all queries filter by `owner_id`). RLS would add defense-in-depth but is not required for the current single-backend architecture. |
-| **F11** | Creation cooldown and rate limiter use in-memory `Map`s | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed store. The provisioning semaphore is similarly in-process. See [Horizontal Scaling Strategy](#horizontal-scaling-strategy) for the migration path. |
-| ~~**F12**~~ | ~~`requestId` not propagated to async provisioning logs~~ | **Resolved** — `correlationId` is now propagated from the HTTP request through all async provisioning steps, including per-step timing logs. |
-| **F13** | Provisioning semaphore is in-process only | The semaphore limits concurrency within a single Node.js process. Multi-instance deployments would need PostgreSQL advisory locks or a distributed semaphore (Redis/etcd). Documented in [Horizontal Scaling Strategy](#horizontal-scaling-strategy). |
-| **F14** | No automated VPS integration tests | Deployment verification (`scripts/verify-deployment.sh`) is manual. A CI stage with k3s-in-Docker (k3d) could automate VPS-like testing but is not yet implemented. |
+| **L1** | No PostgreSQL Row-Level Security (RLS) | Tenant isolation is enforced at the application layer (all queries filter by `owner_id`). RLS would add defense-in-depth but is not required for the current single-backend architecture. |
+| **L2** | Creation cooldown and rate limiter use in-memory `Map`s | Works correctly for a single backend instance. A distributed deployment would need Redis or a DB-backed store. See [Horizontal Scaling Strategy](#horizontal-scaling-strategy) for the migration path. |
+| **L3** | Provisioning semaphore is in-process only | The semaphore limits concurrency within a single Node.js process. Multi-instance deployments would need PostgreSQL advisory locks or a distributed semaphore (Redis/etcd). Documented in [Horizontal Scaling Strategy](#horizontal-scaling-strategy). |
+| **L4** | No automated VPS integration tests | Deployment verification (`scripts/verify-deployment.sh`) is manual. A CI stage with k3s-in-Docker (k3d) could automate VPS-like testing but is not yet implemented. |
 
 ## MedusaJS Storefront SPA
 
@@ -1112,11 +1208,11 @@ This creates a `Deployment` + `Service` for the storefront pod within the same s
 
 ## Roadmap
 
-### Phase 2 — Gen AI Orchestration
+### Gen AI Orchestration (Planned)
 
-In the next phase, the provisioning infrastructure built in Phase 1 will serve as the foundation for **AI-driven store creation**. A Gen AI orchestration layer will allow users to describe their desired store configuration in natural language, and the platform will automatically translate that into provisioning parameters, engine selection, and post-setup customization — eliminating manual input entirely.
+The provisioning infrastructure is designed to support **AI-driven store creation**. A Gen AI orchestration layer will allow users to describe their desired store configuration in natural language, and the platform will automatically translate that into provisioning parameters, engine selection, and post-setup customization — eliminating manual input entirely.
 
-Detailed requirements and constraints for this phase will be defined separately. The current architecture (state machine, Helm abstraction, multi-engine support) has been designed with this extensibility in mind.
+The current architecture (state machine, Helm abstraction, multi-engine support, concurrency semaphore) has been designed with this extensibility in mind.
 
 ## License
 
