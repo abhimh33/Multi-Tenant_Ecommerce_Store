@@ -223,6 +223,10 @@ async function provisionStoreAsync(storeId) {
         'medusa.jwtSecret': jwtSecret,
         'medusa.cookieSecret': cookieSecret,
         'medusa.postgresql.password': dbPassword,
+        // Deploy storefront SPA alongside Medusa backend
+        'storefront.enabled': 'true',
+        'storefront.image.pullPolicy': 'Never',
+        'storefront.storeName': store.name,
       };
     }
 

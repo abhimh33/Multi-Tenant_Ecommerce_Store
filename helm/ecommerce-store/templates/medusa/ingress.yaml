@@ -5,10 +5,14 @@ metadata:
   name: {{ include "ecommerce-store.fullname" . }}-medusa
   labels:
     {{- include "ecommerce-store.medusa.labels" . | nindent 4 }}
-  {{- if .Values.ingress.annotations }}
   annotations:
+    {{- if .Values.ingress.annotations }}
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
-  {{- end }}
+    {{- end }}
+    {{- if .Values.storefront.enabled }}
+    # Ensure longer paths match first (Medusa API before storefront catch-all)
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- end }}
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
@@ -17,6 +21,33 @@ spec:
     - host: {{ include "ecommerce-store.ingressHost" . }}
       http:
         paths:
+          # Medusa Store API
+          - path: /store
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ecommerce-store.medusa.serviceName" . }}
+                port:
+                  name: http
+          # Medusa Admin API
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ecommerce-store.medusa.serviceName" . }}
+                port:
+                  name: http
+          {{- if .Values.storefront.enabled }}
+          # Storefront SPA (catch-all — must be last)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ecommerce-store.storefront.serviceName" . }}
+                port:
+                  name: http
+          {{- else }}
+          # No storefront — route everything to Medusa API
           - path: /
             pathType: Prefix
             backend:
@@ -24,6 +55,7 @@ spec:
                 name: {{ include "ecommerce-store.medusa.serviceName" . }}
                 port:
                   name: http
+          {{- end }}
   {{- if .Values.ingress.tls }}
   tls:
     - hosts:

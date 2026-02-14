@@ -3,8 +3,10 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Accept build args for tenant branding
-ARG VITE_MEDUSA_BACKEND_URL
-ARG VITE_STORE_NAME
+# VITE_MEDUSA_BACKEND_URL is intentionally empty so the SPA uses
+# same-origin requests (/store/*), which nginx proxies to Medusa.
+ARG VITE_MEDUSA_BACKEND_URL=""
+ARG VITE_STORE_NAME="My Store"
 
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -15,33 +17,20 @@ RUN npm run build
 # ─── Production stage ───
 FROM nginx:alpine
 
-# Custom nginx config for SPA routing
 COPY --from=build /app/dist /usr/share/nginx/html
 
-RUN printf 'server {\n\
-  listen 80;\n\
-  server_name _;\n\
-  root /usr/share/nginx/html;\n\
-  index index.html;\n\
-\n\
-  # SPA fallback\n\
-  location / {\n\
-    try_files $uri $uri/ /index.html;\n\
-  }\n\
-\n\
-  # Proxy Medusa API calls\n\
-  location /store/ {\n\
-    proxy_pass ${MEDUSA_BACKEND_URL:-http://medusa:9000}/store/;\n\
-    proxy_set_header Host $host;\n\
-    proxy_set_header X-Real-IP $remote_addr;\n\
-  }\n\
-\n\
-  # Cache static assets\n\
-  location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {\n\
-    expires 30d;\n\
-    add_header Cache-Control "public, immutable";\n\
-  }\n\
-}\n' > /etc/nginx/conf.d/default.conf
+# nginx:alpine auto-runs envsubst on /etc/nginx/templates/*.template
+# at startup, writing results to /etc/nginx/conf.d/.
+# We only substitute MEDUSA_BACKEND_URL to avoid clobbering nginx's
+# own $uri, $host, $remote_addr variables.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+
+# Default backend URL — overridden by Helm deployment env var
+ENV MEDUSA_BACKEND_URL=http://localhost:9000
 
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+
+# Run envsubst only on MEDUSA_BACKEND_URL (preserving nginx's $uri etc.),
+# then start nginx.
+CMD ["/bin/sh", "-c", "envsubst '${MEDUSA_BACKEND_URL}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+

@@ -162,8 +162,8 @@ storefront:
   enabled: false
   image:
     repository: storefront-medusa
-    tag: latest
-    pullPolicy: IfNotPresent
+    tag: local
+    pullPolicy: Never
   replicas: 1
   storeName: "My Store"
   resources:
