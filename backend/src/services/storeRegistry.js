@@ -13,7 +13,7 @@ const STORE_COLUMNS = `
   id, name, engine, status, namespace, helm_release,
   storefront_url, admin_url, failure_reason, retry_count,
   provisioning_started_at, provisioning_completed_at, provisioning_duration_ms,
-  owner_id, created_at, updated_at, deleted_at
+  owner_id, theme, created_at, updated_at, deleted_at
 `;
 
 /**
@@ -22,14 +22,14 @@ const STORE_COLUMNS = `
  * @returns {Promise<Object>} The created store row
  */
 async function create(store) {
-  const { id, name, engine, namespace, helmRelease, ownerId = 'default' } = store;
+  const { id, name, engine, namespace, helmRelease, ownerId = 'default', theme = null } = store;
   const result = await db.query(
-    `INSERT INTO stores (id, name, engine, namespace, helm_release, owner_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO stores (id, name, engine, namespace, helm_release, owner_id, theme)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${STORE_COLUMNS}`,
-    [id, name, engine, namespace, helmRelease, ownerId]
+    [id, name, engine, namespace, helmRelease, ownerId, theme]
   );
-  logger.info('Store record created', { storeId: id, engine });
+  logger.info('Store record created', { storeId: id, engine, theme });
   return normalizeRow(result.rows[0]);
 }
 
@@ -234,6 +234,7 @@ function normalizeRow(row) {
     provisioningCompletedAt: row.provisioning_completed_at,
     provisioningDurationMs: row.provisioning_duration_ms,
     ownerId: row.owner_id,
+    theme: row.theme || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,

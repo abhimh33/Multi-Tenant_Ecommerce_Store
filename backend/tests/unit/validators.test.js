@@ -185,6 +185,53 @@ describe('Validation Schemas', () => {
       });
       expect(error).toBeUndefined();
     });
+
+    it('accepts storefront theme for woocommerce', () => {
+      const { error, value } = createStoreSchema.validate({
+        name: 'woo-store',
+        engine: 'woocommerce',
+        theme: 'storefront',
+      });
+      expect(error).toBeUndefined();
+      expect(value.theme).toBe('storefront');
+    });
+
+    it('accepts astra theme for woocommerce', () => {
+      const { error, value } = createStoreSchema.validate({
+        name: 'woo-store',
+        engine: 'woocommerce',
+        theme: 'astra',
+      });
+      expect(error).toBeUndefined();
+      expect(value.theme).toBe('astra');
+    });
+
+    it('defaults theme to storefront for woocommerce', () => {
+      const { error, value } = createStoreSchema.validate({
+        name: 'woo-store',
+        engine: 'woocommerce',
+      });
+      expect(error).toBeUndefined();
+      expect(value.theme).toBe('storefront');
+    });
+
+    it('rejects theme for medusa engine', () => {
+      const { error } = createStoreSchema.validate({
+        name: 'medusa-store',
+        engine: 'medusa',
+        theme: 'storefront',
+      });
+      expect(error).toBeDefined();
+    });
+
+    it('rejects invalid theme', () => {
+      const { error } = createStoreSchema.validate({
+        name: 'woo-store',
+        engine: 'woocommerce',
+        theme: 'divi',
+      });
+      expect(error).toBeDefined();
+    });
   });
 
   // ─── List Stores Schema ───────────────────────────────────────────────

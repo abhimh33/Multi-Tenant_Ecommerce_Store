@@ -121,7 +121,12 @@ export default function StoreList() {
                       <Badge variant={STATUS_VARIANTS[store.status]}>{store.status}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{store.engine}</Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="outline">{store.engine}</Badge>
+                        {store.theme && (
+                          <Badge variant="secondary" className="text-[10px]">{store.theme}</Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {formatDuration(store.provisioningDurationMs)}

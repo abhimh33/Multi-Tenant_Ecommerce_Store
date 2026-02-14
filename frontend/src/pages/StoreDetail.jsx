@@ -192,6 +192,13 @@ export default function StoreDetail() {
                 {store.engine === 'woocommerce' ? '🛒 WooCommerce' : '⚡ MedusaJS'}
               </Badge>
             </InfoRow>
+            {store.theme && (
+              <InfoRow label="Theme">
+                <Badge variant="secondary">
+                  {store.theme === 'astra' ? '✨ Astra' : '🏪 Storefront'}
+                </Badge>
+              </InfoRow>
+            )}
             <InfoRow label="Stack">
               <span className="text-xs text-muted-foreground">
                 {store.engine === 'woocommerce' ? 'WordPress + MariaDB' : 'Node.js + PostgreSQL'}

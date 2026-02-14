@@ -15,10 +15,18 @@ export default function CreateStore() {
   const [form, setForm] = useState({
     name: '',
     engine: 'woocommerce',
+    theme: 'storefront',
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => storesApi.create(data),
+    mutationFn: (data) => {
+      // Only send theme for WooCommerce
+      const payload = { name: data.name, engine: data.engine };
+      if (data.engine === 'woocommerce') {
+        payload.theme = data.theme;
+      }
+      return storesApi.create(payload);
+    },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['stores'] });
       toast.success(`Store "${res.data.store.name}" is being provisioned!`);
@@ -84,7 +92,7 @@ export default function CreateStore() {
                       ? 'border-primary bg-primary/5'
                       : 'border-border hover:border-primary/50'
                     }`}
-                  onClick={() => setForm({ ...form, engine: 'woocommerce' })}
+                  onClick={() => setForm({ ...form, engine: 'woocommerce', theme: 'storefront' })}
                 >
                   <span className="text-2xl">🛒</span>
                   <span className="text-sm font-medium">WooCommerce</span>
@@ -96,7 +104,7 @@ export default function CreateStore() {
                       ? 'border-primary bg-primary/5'
                       : 'border-border hover:border-primary/50'
                     }`}
-                  onClick={() => setForm({ ...form, engine: 'medusa' })}
+                  onClick={() => setForm({ ...form, engine: 'medusa', theme: '' })}
                 >
                   <span className="text-2xl">⚡</span>
                   <span className="text-sm font-medium">MedusaJS</span>
@@ -104,6 +112,38 @@ export default function CreateStore() {
                 </button>
               </div>
             </div>
+
+            {form.engine === 'woocommerce' && (
+              <div className="space-y-2">
+                <Label>Theme</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    className={`flex flex-col items-center gap-3 rounded-lg border-2 p-4 transition-colors ${form.theme === 'storefront'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                      }`}
+                    onClick={() => setForm({ ...form, theme: 'storefront' })}
+                  >
+                    <span className="text-2xl">🏪</span>
+                    <span className="text-sm font-medium">Storefront</span>
+                    <span className="text-xs text-muted-foreground text-center">Official WooCommerce theme. Clean, flexible, and fully integrated.</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex flex-col items-center gap-3 rounded-lg border-2 p-4 transition-colors ${form.theme === 'astra'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                      }`}
+                    onClick={() => setForm({ ...form, theme: 'astra' })}
+                  >
+                    <span className="text-2xl">✨</span>
+                    <span className="text-sm font-medium">Astra</span>
+                    <span className="text-xs text-muted-foreground text-center">Lightweight and fast. Highly customizable with WooCommerce support.</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </CardContent>
           <CardFooter className="flex justify-between">
             <Button type="button" variant="outline" onClick={() => navigate('/stores')}>

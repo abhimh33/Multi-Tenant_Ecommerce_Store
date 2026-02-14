@@ -98,6 +98,8 @@ wordpress:
     password: "changeme-admin"
     email: "admin@example.com"
   siteTitle: "My Store"
+  theme: "storefront"  # storefront | astra
+  woocommerceVersion: "9.5.2"  # Pin WooCommerce version for WP 6.7 compatibility
   persistence:
     storageClass: ""
     size: "2Gi"

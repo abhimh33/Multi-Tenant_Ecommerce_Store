@@ -78,6 +78,17 @@ const createStoreSchema = Joi.object({
     .messages({
       'any.only': 'Engine must be one of: woocommerce, medusa.',
     }),
+  theme: Joi.string()
+    .valid('storefront', 'astra')
+    .when('engine', {
+      is: 'woocommerce',
+      then: Joi.string().default('storefront'),
+      otherwise: Joi.forbidden(),
+    })
+    .messages({
+      'any.only': 'Theme must be one of: storefront, astra.',
+      'any.unknown': 'Theme is only applicable to WooCommerce stores.',
+    }),
   // ownerId is intentionally NOT accepted from client — always derived from JWT
 }).options({ stripUnknown: true });
 

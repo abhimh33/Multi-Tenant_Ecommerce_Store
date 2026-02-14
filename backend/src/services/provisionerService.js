@@ -49,7 +49,9 @@ const activeOperations = new Map();
  * @param {string} [params.ownerId='default'] - Owner for limit enforcement
  * @returns {Promise<Object>} Created store record
  */
-async function createStore({ name, engine, ownerId = 'default' }) {
+async function createStore({ name, engine, ownerId = 'default', theme }) {
+  // Default theme for WooCommerce if not specified
+  const resolvedTheme = engine === 'woocommerce' ? (theme || 'storefront') : null;
   // 1. Idempotency: check if store with this name already exists
   const existing = await storeRegistry.findByNameAndOwner(name, ownerId);
   if (existing) {
@@ -90,14 +92,15 @@ async function createStore({ name, engine, ownerId = 'default' }) {
     namespace,
     helmRelease,
     ownerId,
+    theme: resolvedTheme,
   });
 
   await auditService.log({
     storeId,
     eventType: 'store_created',
     newStatus: STATES.REQUESTED,
-    message: `Store '${name}' created with engine '${engine}'`,
-    metadata: { engine, ownerId },
+    message: `Store '${name}' created with engine '${engine}'${resolvedTheme ? ` and theme '${resolvedTheme}'` : ''}`,
+    metadata: { engine, ownerId, theme: resolvedTheme },
   });
 
   // 5. Kick off async provisioning (non-blocking)
@@ -199,6 +202,7 @@ async function provisionStoreAsync(storeId) {
         'wordpress.admin.password': adminPassword,
         'wordpress.admin.username': 'admin',
         'wordpress.admin.email': 'admin@example.com',
+        'wordpress.theme': store.theme || 'storefront',
         'mariadb.rootPassword': dbRootPassword,
         'mariadb.password': dbPassword,
       };
@@ -272,6 +276,7 @@ async function provisionStoreAsync(storeId) {
           storeId,
           siteUrl: `http://${storeId}${config.store.domainSuffix}`,
           credentials,
+          theme: store.theme || 'storefront',
         });
 
         await auditService.log({
