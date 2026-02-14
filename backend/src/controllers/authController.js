@@ -133,7 +133,7 @@ async function changePassword(req, res, next) {
     for (const store of stores) {
       try {
         const creds = store.adminCredentials;
-        if (!creds || !creds.adminEmail) {
+        if (!creds || !creds.email) {
           logger.warn('Store missing admin credentials, skipping propagation', { storeId: store.id });
           propagationResults.push({ storeId: store.id, success: false, reason: 'no credentials' });
           continue;
@@ -142,15 +142,15 @@ async function changePassword(req, res, next) {
         const success = await storeSetupService.updateMedusaAdminPassword({
           namespace: store.namespace,
           storeId: store.id,
-          adminEmail: creds.adminEmail,
-          currentPassword,
+          adminEmail: creds.email,
+          currentPassword: creds.password,
           newPassword,
         });
 
         if (success) {
           // Update stored credentials with new password
           await storeRegistry.update(store.id, {
-            adminCredentials: { ...creds, adminPassword: newPassword },
+            adminCredentials: { ...creds, password: newPassword },
           });
         }
 
