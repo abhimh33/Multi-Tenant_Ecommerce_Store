@@ -9,7 +9,6 @@ import OrderConfirmation from '@/pages/OrderConfirmation';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import Account from '@/pages/Account';
-import AdminLogin from '@/pages/AdminLogin';
 
 export default function App() {
   return (
@@ -24,7 +23,6 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/account" element={<Account />} />
-        <Route path="/admin-login" element={<AdminLogin />} />
         <Route path="*" element={
           <div className="mx-auto max-w-xl py-32 text-center">
             <h1 className="font-display text-5xl font-bold text-surface-900 mb-3">404</h1>

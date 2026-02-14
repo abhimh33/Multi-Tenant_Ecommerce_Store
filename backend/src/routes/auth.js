@@ -5,7 +5,7 @@ const router = express.Router();
 
 const authController = require('../controllers/authController');
 const { authenticateToken } = require('../middleware/auth');
-const { validate, registerSchema, loginSchema } = require('../middleware/validators');
+const { validate, registerSchema, loginSchema, changePasswordSchema } = require('../middleware/validators');
 const { loginLimiter, registerLimiter } = require('../middleware/loginLimiter');
 
 // POST /api/v1/auth/register (rate limited: 5/hour per IP)
@@ -29,6 +29,14 @@ router.get(
   '/me',
   authenticateToken,
   authController.me
+);
+
+// PATCH /api/v1/auth/password  (requires authentication)
+router.patch(
+  '/password',
+  authenticateToken,
+  validate(changePasswordSchema, 'body'),
+  authController.changePassword
 );
 
 module.exports = router;

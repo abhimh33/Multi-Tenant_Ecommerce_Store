@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingBag, Search, Menu, X, User, LogOut, Shield } from 'lucide-react';
+import { ShoppingBag, Search, Menu, X, User, LogOut } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useCustomer } from '@/context/CustomerContext';
 import { getStoreName } from '@/lib/utils';
@@ -118,14 +118,6 @@ export default function Navbar() {
                         >
                           <User className="h-4 w-4" /> Create account
                         </Link>
-                        <div className="border-t border-surface-50" />
-                        <Link
-                          to="/admin-login"
-                          onClick={() => setUserMenuOpen(false)}
-                          className="flex items-center gap-2 px-4 py-2.5 text-sm text-surface-500 hover:bg-surface-50"
-                        >
-                          <Shield className="h-4 w-4" /> Admin login
-                        </Link>
                       </>
                     )}
                   </div>
@@ -231,13 +223,6 @@ export default function Navbar() {
                   className="rounded-lg px-4 py-3 text-sm font-medium text-surface-700 hover:bg-surface-50"
                 >
                   Create account
-                </Link>
-                <Link
-                  to="/admin-login"
-                  onClick={() => setMobileOpen(false)}
-                  className="rounded-lg px-4 py-3 text-sm font-medium text-surface-500 hover:bg-surface-50"
-                >
-                  Admin login
                 </Link>
               </>
             )}

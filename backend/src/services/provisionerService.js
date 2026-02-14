@@ -50,7 +50,7 @@ const activeOperations = new Map();
  * @param {string} [params.ownerId='default'] - Owner for limit enforcement
  * @returns {Promise<Object>} Created store record
  */
-async function createStore({ name, engine, ownerId = 'default', theme }) {
+async function createStore({ name, engine, ownerId = 'default', theme, tenantPassword }) {
   // Default theme for WooCommerce if not specified
   const resolvedTheme = engine === 'woocommerce' ? (theme || 'storefront') : null;
   // 1. Idempotency: check if store with this name already exists
@@ -105,7 +105,7 @@ async function createStore({ name, engine, ownerId = 'default', theme }) {
   });
 
   // 5. Kick off async provisioning (non-blocking)
-  provisionStoreAsync(storeId).catch(err => {
+  provisionStoreAsync(storeId, { tenantPassword }).catch(err => {
     logger.error('Unhandled provisioning error', { storeId, error: err.message });
   });
 
@@ -124,7 +124,7 @@ async function createStore({ name, engine, ownerId = 'default', theme }) {
  * 5. Extract URLs
  * 6. Transition to READY or FAILED
  */
-async function provisionStoreAsync(storeId) {
+async function provisionStoreAsync(storeId, { tenantPassword } = {}) {
   // Prevent concurrent provisioning of the same store
   if (activeOperations.has(storeId)) {
     logger.warn('Provisioning already in progress', { storeId });
@@ -185,7 +185,7 @@ async function provisionStoreAsync(storeId) {
     });
 
     // Generate random credentials for this store (engine-aware)
-    const adminPassword = crypto.randomBytes(12).toString('base64url');
+    const adminPassword = tenantPassword || crypto.randomBytes(12).toString('base64url');
     const dbPassword = crypto.randomBytes(16).toString('base64url');
     let credentials;
     let setValues;

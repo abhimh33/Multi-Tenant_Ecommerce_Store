@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { authApi } from '../services/api';
 import {
   LayoutDashboard,
   Store,
@@ -11,6 +12,7 @@ import {
   X,
   ShoppingBag,
   Shield,
+  KeyRound,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
@@ -26,10 +28,38 @@ const navItems = [
 function SidebarContent({ onNavigate }) {
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const [showPwForm, setShowPwForm] = useState(false);
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [pwStatus, setPwStatus] = useState({ loading: false, error: null, success: false });
 
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const handlePwChange = async (e) => {
+    e.preventDefault();
+    if (pwForm.newPassword !== pwForm.confirm) {
+      setPwStatus({ loading: false, error: 'New passwords do not match.', success: false });
+      return;
+    }
+    if (pwForm.newPassword.length < 8) {
+      setPwStatus({ loading: false, error: 'New password must be at least 8 characters.', success: false });
+      return;
+    }
+    setPwStatus({ loading: true, error: null, success: false });
+    try {
+      await authApi.changePassword({
+        currentPassword: pwForm.currentPassword,
+        newPassword: pwForm.newPassword,
+      });
+      setPwStatus({ loading: false, error: null, success: true });
+      setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
+      setTimeout(() => { setShowPwForm(false); setPwStatus({ loading: false, error: null, success: false }); }, 2000);
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || 'Failed to change password.';
+      setPwStatus({ loading: false, error: msg, success: false });
+    }
   };
 
   return (
@@ -80,6 +110,48 @@ function SidebarContent({ onNavigate }) {
             </div>
           </div>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-start gap-2"
+          onClick={() => setShowPwForm(!showPwForm)}
+        >
+          <KeyRound className="h-4 w-4" />
+          Change Password
+        </Button>
+        {showPwForm && (
+          <form onSubmit={handlePwChange} className="space-y-2 rounded-md border p-3">
+            <input
+              type="password"
+              placeholder="Current password"
+              value={pwForm.currentPassword}
+              onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })}
+              className="w-full rounded border px-2 py-1 text-sm"
+              required
+            />
+            <input
+              type="password"
+              placeholder="New password"
+              value={pwForm.newPassword}
+              onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })}
+              className="w-full rounded border px-2 py-1 text-sm"
+              required
+            />
+            <input
+              type="password"
+              placeholder="Confirm new password"
+              value={pwForm.confirm}
+              onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
+              className="w-full rounded border px-2 py-1 text-sm"
+              required
+            />
+            {pwStatus.error && <p className="text-xs text-red-500">{pwStatus.error}</p>}
+            {pwStatus.success && <p className="text-xs text-emerald-500">Password changed!</p>}
+            <Button type="submit" size="sm" className="w-full" disabled={pwStatus.loading}>
+              {pwStatus.loading ? 'Saving…' : 'Save'}
+            </Button>
+          </form>
+        )}
         <Button
           variant="outline"
           size="sm"

@@ -812,9 +812,81 @@ async function setupMedusa({ namespace, storeId, credentials, storeName }) {
   return results;
 }
 
+/**
+ * Update the Medusa admin user's password inside a running store.
+ * Authenticates with the current password, finds the admin user, and updates.
+ *
+ * @param {Object} params
+ * @param {string} params.namespace - K8s namespace
+ * @param {string} params.storeId - For logging
+ * @param {string} params.adminEmail - Admin email
+ * @param {string} params.currentPassword - Current admin password
+ * @param {string} params.newPassword - New admin password
+ * @returns {Promise<boolean>} true if successful
+ */
+async function updateMedusaAdminPassword({ namespace, storeId, adminEmail, currentPassword, newPassword }) {
+  logger.info('Updating Medusa admin password', { storeId, namespace, adminEmail });
+
+  const podName = await findMedusaPod(namespace);
+
+  // Build a Node.js script that runs inside the pod to update the admin password
+  const scriptLines = [
+    'const http = require("http");',
+    'function doReq(method, path, body, token) {',
+    '  return new Promise((resolve, reject) => {',
+    '    const opts = { hostname: "localhost", port: 9000, path, method, headers: { "Content-Type": "application/json" } };',
+    '    if (token) opts.headers["Authorization"] = "Bearer " + token;',
+    '    const r = http.request(opts, (res) => {',
+    '      let d = "";',
+    '      res.on("data", c => d += c);',
+    '      res.on("end", () => {',
+    '        try { resolve({ status: res.statusCode, data: JSON.parse(d) }); }',
+    '        catch(e) { resolve({ status: res.statusCode, data: d }); }',
+    '      });',
+    '    });',
+    '    r.on("error", reject);',
+    '    if (body) r.write(JSON.stringify(body));',
+    '    r.end();',
+    '  });',
+    '}',
+    '(async () => {',
+    '  var auth = await doReq("POST", "/admin/auth/token", ' + JSON.stringify({ email: adminEmail, password: currentPassword }) + ');',
+    '  if (auth.status !== 200 || !auth.data.access_token) { console.error("AUTH_FAILED"); process.exit(1); }',
+    '  var token = auth.data.access_token;',
+    '  var users = await doReq("GET", "/admin/users", null, token);',
+    '  if (users.status !== 200) { console.error("USERS_FETCH_FAILED"); process.exit(1); }',
+    '  var adminUser = users.data.users.find(function(u) { return u.email === ' + JSON.stringify(adminEmail) + '; });',
+    '  if (!adminUser) { console.error("USER_NOT_FOUND"); process.exit(1); }',
+    '  var upd = await doReq("POST", "/admin/users/" + adminUser.id, ' + JSON.stringify({ password: newPassword }) + ', token);',
+    '  if (upd.status !== 200) { console.error("UPDATE_FAILED"); process.exit(1); }',
+    '  console.log("PASSWORD_UPDATED");',
+    '})();',
+  ];
+  const updateScript = scriptLines.join('\n');
+
+  const writeCmd = "cat > /tmp/update-pw.js << 'PWEOF'\n" + updateScript + '\nPWEOF';
+
+  try {
+    await kubectlExecMedusa({ namespace, podName, command: writeCmd, timeoutMs: 10000 });
+    const result = await kubectlExecMedusa({ namespace, podName, command: 'node /tmp/update-pw.js', timeoutMs: 30000 });
+    await kubectlExecMedusa({ namespace, podName, command: 'rm -f /tmp/update-pw.js', timeoutMs: 5000 });
+
+    if (result.stdout.includes('PASSWORD_UPDATED')) {
+      logger.info('Medusa admin password updated successfully', { storeId });
+      return true;
+    }
+    logger.warn('Medusa admin password update returned unexpected output', { storeId, output: result.stdout });
+    return false;
+  } catch (err) {
+    logger.error('Failed to update Medusa admin password', { storeId, error: err.message });
+    throw err;
+  }
+}
+
 module.exports = {
   setupWooCommerce,
   setupMedusa,
+  updateMedusaAdminPassword,
   kubectlExec,
   kubectlExecMedusa,
   findWordPressPod,

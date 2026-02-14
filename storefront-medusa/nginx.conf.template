@@ -4,9 +4,18 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # SPA fallback — serve index.html for all non-file routes
-    location / {
-        try_files $uri $uri/ /index.html;
+    # Admin portal — serve static admin.html at exactly /admin
+    location = /admin {
+        try_files /admin.html =404;
+    }
+
+    # Proxy Medusa Admin API calls to the backend pod
+    location /admin/ {
+        proxy_pass ${MEDUSA_BACKEND_URL}/admin/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     # Proxy Medusa Store API calls to the backend pod
@@ -18,11 +27,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Proxy Medusa admin API
-    location /admin/ {
-        proxy_pass ${MEDUSA_BACKEND_URL}/admin/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+    # SPA fallback — serve index.html for all non-file storefront routes
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 
     # Cache static assets aggressively

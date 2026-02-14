@@ -53,6 +53,47 @@ async function authenticate({ email, password }) {
   return normalizeUser(user);
 }
 
+// ─── Password Change ─────────────────────────────────────────────────────────
+
+/**
+ * Change a user's password after verifying their current one.
+ * @param {number} userId
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {Promise<Object>} Updated user
+ * @throws {Error} if current password is wrong or user not found
+ */
+async function changePassword(userId, currentPassword, newPassword) {
+  const result = await db.query(
+    `SELECT id, email, password_hash, is_active FROM users WHERE id = $1`,
+    [userId]
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error('User not found');
+  }
+
+  const user = result.rows[0];
+
+  if (!user.is_active) {
+    throw new Error('Account is deactivated');
+  }
+
+  const valid = await bcrypt.compare(currentPassword, user.password_hash);
+  if (!valid) {
+    throw new Error('Current password is incorrect');
+  }
+
+  const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  await db.query(
+    `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+    [newHash, userId]
+  );
+
+  logger.info('Password changed', { userId });
+  return findById(userId);
+}
+
 // ─── JWT ─────────────────────────────────────────────────────────────────────
 
 function generateToken(user) {
@@ -108,6 +149,7 @@ function normalizeUser(row) {
 module.exports = {
   register,
   authenticate,
+  changePassword,
   generateToken,
   verifyToken,
   findById,

@@ -14,11 +14,11 @@ const provisionerService = require('../services/provisionerService');
  */
 async function createStore(req, res, next) {
   try {
-    const { name, engine, theme } = req.body;
+    const { name, engine, theme, password } = req.body;
     // Owner is ALWAYS derived from the authenticated user — never from client input
     const ownerId = req.user.id;
 
-    const store = await provisionerService.createStore({ name, engine, ownerId, theme });
+    const store = await provisionerService.createStore({ name, engine, ownerId, theme, tenantPassword: password });
 
     res.status(202).json({
       requestId: req.requestId,

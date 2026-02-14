@@ -89,7 +89,22 @@ const createStoreSchema = Joi.object({
       'any.only': 'Theme must be one of: storefront, astra.',
       'any.unknown': 'Theme is only applicable to WooCommerce stores.',
     }),
+  // Optional — if provided, used as the admin password for the provisioned store
+  password: Joi.string().min(8).max(128).optional()
+    .messages({
+      'string.min': 'Password must be at least 8 characters.',
+    }),
   // ownerId is intentionally NOT accepted from client — always derived from JWT
+}).options({ stripUnknown: true });
+
+// ─── Password Change Schema ──────────────────────────────────────────────────
+
+const changePasswordSchema = Joi.object({
+  currentPassword: Joi.string().required(),
+  newPassword: Joi.string().min(8).max(128).required()
+    .messages({
+      'string.min': 'New password must be at least 8 characters.',
+    }),
 }).options({ stripUnknown: true });
 
 const listStoresSchema = Joi.object({
@@ -135,6 +150,7 @@ function validate(schema, source = 'body') {
 module.exports = {
   registerSchema,
   loginSchema,
+  changePasswordSchema,
   auditQuerySchema,
   createStoreSchema,
   listStoresSchema,

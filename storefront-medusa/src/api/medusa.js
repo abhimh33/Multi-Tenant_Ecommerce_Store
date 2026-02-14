@@ -222,19 +222,4 @@ export async function updateCustomer(data) {
   return customer;
 }
 
-/* ── Admin Auth ─────────────────────────────── */
-
-/** Admin login — returns user + JWT token. */
-export async function adminLogin(email, password) {
-  const data = await request('/admin/auth', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
-  return data; // { user }
-}
-
-/** Get admin session. */
-export async function getAdminSession() {
-  const data = await request('/admin/auth');
-  return data; // { user }
-}
+// Admin auth removed — admin access is via the dedicated /admin portal only.

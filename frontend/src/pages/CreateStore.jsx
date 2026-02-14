@@ -16,6 +16,7 @@ export default function CreateStore() {
     name: '',
     engine: 'woocommerce',
     theme: 'storefront',
+    password: '',
   });
 
   const createMutation = useMutation({
@@ -24,6 +25,9 @@ export default function CreateStore() {
       const payload = { name: data.name, engine: data.engine };
       if (data.engine === 'woocommerce') {
         payload.theme = data.theme;
+      }
+      if (data.password) {
+        payload.password = data.password;
       }
       return storesApi.create(payload);
     },
@@ -142,6 +146,23 @@ export default function CreateStore() {
                     <span className="text-xs text-muted-foreground text-center">Lightweight and fast. Highly customizable with WooCommerce support.</span>
                   </button>
                 </div>
+              </div>
+            )}
+            {form.engine === 'medusa' && (
+              <div className="space-y-2">
+                <Label htmlFor="password">Admin Password (optional)</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Leave blank for a random password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  minLength={8}
+                  maxLength={128}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Set a custom admin password for your store. If blank, a secure random one will be generated. You can view it on the store detail page.
+                </p>
               </div>
             )}
           </CardContent>

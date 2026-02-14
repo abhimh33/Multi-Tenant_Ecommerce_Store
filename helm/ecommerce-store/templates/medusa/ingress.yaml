@@ -29,16 +29,8 @@ spec:
                 name: {{ include "ecommerce-store.medusa.serviceName" . }}
                 port:
                   name: http
-          # Medusa Admin API
-          - path: /admin
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "ecommerce-store.medusa.serviceName" . }}
-                port:
-                  name: http
           {{- if .Values.storefront.enabled }}
-          # Storefront SPA (catch-all — must be last)
+          # Storefront SPA (catch-all — includes /admin portal served by nginx)
           - path: /
             pathType: Prefix
             backend:
@@ -47,7 +39,14 @@ spec:
                 port:
                   name: http
           {{- else }}
-          # No storefront — route everything to Medusa API
+          # No storefront — route admin + everything else to Medusa API
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ecommerce-store.medusa.serviceName" . }}
+                port:
+                  name: http
           - path: /
             pathType: Prefix
             backend:
