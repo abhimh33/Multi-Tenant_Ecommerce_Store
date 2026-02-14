@@ -499,11 +499,174 @@ async function findMedusaPod(namespace) {
 }
 
 /**
+ * Execute a Medusa Admin API call from inside the pod using wget.
+ * Returns the parsed JSON response.
+ */
+async function medusaAdminApi({ namespace, podName, method, path, body, token, timeoutMs = 30000 }) {
+  let cmd = `wget -qO- --method=${method} --header="Content-Type: application/json"`;
+  if (token) cmd += ` --header="Authorization: Bearer ${token}"`;
+  if (body) {
+    const jsonStr = JSON.stringify(body).replace(/'/g, "'\\''");
+    cmd += ` --body-data='${jsonStr}'`;
+  }
+  cmd += ` "http://localhost:9000${path}" 2>&1`;
+  
+  const result = await kubectlExecMedusa({ namespace, podName, command: cmd, timeoutMs });
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return result.stdout;
+  }
+}
+
+/**
+ * Seed demo data into a freshly-provisioned Medusa store.
+ * Uses the Admin API from inside the Medusa pod (localhost:9000).
+ * Auth via /admin/auth/token → JWT Bearer token.
+ *
+ * Seeds: region, shipping options, collections, products.
+ */
+async function seedMedusaDemoData({ namespace, podName, storeId, adminEmail, adminPassword }) {
+  logger.info('Seeding Medusa demo data', { storeId });
+  const results = {};
+
+  const seedCmd = buildSeedScript(adminEmail, adminPassword);
+  
+  try {
+    const seedResult = await kubectlExecMedusa({
+      namespace,
+      podName,
+      command: seedCmd,
+      timeoutMs: 120000, // 2 min — lots of API calls
+    });
+    
+    logger.info('Seed script output', { storeId, stdout: seedResult.stdout.substring(0, 1000) });
+    results.status = 'seeded';
+    
+    // Parse summary from output
+    const lines = seedResult.stdout.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('SEED_')) {
+        const [key, ...val] = line.split(':');
+        results[key] = val.join(':').trim();
+      }
+    }
+  } catch (err) {
+    logger.warn('Seed script failed', { storeId, error: err.message });
+    results.status = `script_failed: ${err.message}`;
+  }
+
+  return results;
+}
+
+/**
+ * Build a Node.js script that seeds demo data via the Medusa Admin API.
+ * The script runs inside the Medusa container (node:alpine).
+ * Uses JWT Bearer auth via /admin/auth/token endpoint.
+ */
+function buildSeedScript(email, password) {
+  const nodeScript = `
+const http = require('http');
+function req(method, path, body, token) {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const opts = { hostname: 'localhost', port: 9000, path, method, headers: { 'Content-Type': 'application/json' } };
+    if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+    if (data) opts.headers['Content-Length'] = Buffer.byteLength(data);
+    const r = http.request(opts, (res) => {
+      let chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString();
+        let json; try { json = JSON.parse(raw); } catch { json = raw; }
+        resolve({ status: res.statusCode, data: json });
+      });
+    });
+    r.on('error', reject);
+    if (data) r.write(data);
+    r.end();
+  });
+}
+async function seed() {
+  const tokenRes = await req('POST', '/admin/auth/token', { email: '${email}', password: '${password}' });
+  if (tokenRes.status !== 200) { console.log('SEED_AUTH:failed ' + tokenRes.status); return; }
+  const tk = tokenRes.data.access_token;
+  console.log('SEED_AUTH:ok');
+
+  // Region
+  const regRes = await req('GET', '/admin/regions', null, tk);
+  let regionId = regRes.data.regions && regRes.data.regions[0] ? regRes.data.regions[0].id : null;
+  if (!regionId) {
+    const rr = await req('POST', '/admin/regions', { name: 'North America', currency_code: 'usd', tax_rate: 0, payment_providers: ['manual'], fulfillment_providers: ['manual'], countries: ['us', 'ca', 'gb'] }, tk);
+    regionId = rr.data.region ? rr.data.region.id : null;
+    console.log('SEED_REGION:created ' + regionId);
+  } else { console.log('SEED_REGION:exists ' + regionId); }
+  if (!regionId) { console.log('SEED_ERROR:no region'); return; }
+
+  // Shipping
+  const soRes = await req('GET', '/admin/shipping-options', null, tk);
+  if (!soRes.data.shipping_options || soRes.data.shipping_options.length === 0) {
+    await req('POST', '/admin/shipping-options', { name: 'Standard Shipping', region_id: regionId, provider_id: 'manual', data: {}, price_type: 'flat_rate', amount: 500, is_return: false }, tk);
+    await req('POST', '/admin/shipping-options', { name: 'Express Shipping', region_id: regionId, provider_id: 'manual', data: {}, price_type: 'flat_rate', amount: 1500, is_return: false }, tk);
+    console.log('SEED_SHIPPING:created 2');
+  } else { console.log('SEED_SHIPPING:exists ' + soRes.data.shipping_options.length); }
+
+  // Collections
+  const existingColsRes = await req('GET', '/admin/collections?limit=100', null, tk);
+  const existingCols = existingColsRes.data.collections || [];
+  const colDefs = [{ title: 'Summer Collection', handle: 'summer-collection' }, { title: 'Best Sellers', handle: 'best-sellers' }, { title: 'New Arrivals', handle: 'new-arrivals' }];
+  const colIds = {};
+  for (const col of colDefs) {
+    const found = existingCols.find(c => c.handle === col.handle);
+    if (found) { colIds[col.handle] = found.id; continue; }
+    const cr = await req('POST', '/admin/collections', col, tk);
+    if (cr.data && cr.data.collection) colIds[col.handle] = cr.data.collection.id;
+  }
+  console.log('SEED_COLLECTIONS:' + Object.keys(colIds).length);
+
+  // Products - check if already seeded
+  const existingProdsRes = await req('GET', '/admin/products?limit=1', null, tk);
+  if (existingProdsRes.data.count && existingProdsRes.data.count >= 8) {
+    console.log('SEED_PRODUCTS:already_seeded ' + existingProdsRes.data.count);
+    console.log('SEED_COMPLETE:ok');
+    return;
+  }
+
+  const products = [
+    { title: 'Classic Cotton T-Shirt', handle: 'classic-cotton-tshirt', description: 'A comfortable 100% cotton t-shirt perfect for everyday wear.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&q=80', collection_id: colIds['best-sellers'], options: [{ title: 'Size' }], variants: [{ title: 'S', prices: [{ currency_code: 'usd', amount: 2999 }], options: [{ value: 'S' }], inventory_quantity: 100, manage_inventory: false }, { title: 'M', prices: [{ currency_code: 'usd', amount: 2999 }], options: [{ value: 'M' }], inventory_quantity: 100, manage_inventory: false }, { title: 'L', prices: [{ currency_code: 'usd', amount: 2999 }], options: [{ value: 'L' }], inventory_quantity: 100, manage_inventory: false }] },
+    { title: 'Slim Fit Denim Jeans', handle: 'slim-fit-denim-jeans', description: 'Modern slim-fit jeans crafted from premium stretch denim.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1542272604-787c3835535d?w=600&q=80', collection_id: colIds['best-sellers'], options: [{ title: 'Size' }], variants: [{ title: '30', prices: [{ currency_code: 'usd', amount: 7999 }], options: [{ value: '30' }], inventory_quantity: 50, manage_inventory: false }, { title: '32', prices: [{ currency_code: 'usd', amount: 7999 }], options: [{ value: '32' }], inventory_quantity: 50, manage_inventory: false }, { title: '34', prices: [{ currency_code: 'usd', amount: 7999 }], options: [{ value: '34' }], inventory_quantity: 50, manage_inventory: false }] },
+    { title: 'Leather Crossbody Bag', handle: 'leather-crossbody-bag', description: 'Elegant genuine leather crossbody bag with adjustable strap.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=600&q=80', collection_id: colIds['summer-collection'], options: [{ title: 'Color' }], variants: [{ title: 'Black', prices: [{ currency_code: 'usd', amount: 12999 }], options: [{ value: 'Black' }], inventory_quantity: 30, manage_inventory: false }, { title: 'Brown', prices: [{ currency_code: 'usd', amount: 12999 }], options: [{ value: 'Brown' }], inventory_quantity: 30, manage_inventory: false }] },
+    { title: 'Wireless Bluetooth Headphones', handle: 'wireless-bt-headphones', description: 'Premium noise-cancelling wireless headphones with 30-hour battery life.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&q=80', collection_id: colIds['new-arrivals'], options: [{ title: 'Color' }], variants: [{ title: 'Matte Black', prices: [{ currency_code: 'usd', amount: 19999 }], options: [{ value: 'Matte Black' }], inventory_quantity: 25, manage_inventory: false }, { title: 'Silver', prices: [{ currency_code: 'usd', amount: 19999 }], options: [{ value: 'Silver' }], inventory_quantity: 25, manage_inventory: false }] },
+    { title: 'Canvas Sneakers', handle: 'canvas-sneakers', description: 'Casual low-top canvas sneakers with vulcanized rubber sole.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1525966222134-fcfa99b8ae77?w=600&q=80', collection_id: colIds['summer-collection'], options: [{ title: 'Size' }], variants: [{ title: '8', prices: [{ currency_code: 'usd', amount: 5999 }], options: [{ value: '8' }], inventory_quantity: 40, manage_inventory: false }, { title: '9', prices: [{ currency_code: 'usd', amount: 5999 }], options: [{ value: '9' }], inventory_quantity: 40, manage_inventory: false }, { title: '10', prices: [{ currency_code: 'usd', amount: 5999 }], options: [{ value: '10' }], inventory_quantity: 40, manage_inventory: false }] },
+    { title: 'Stainless Steel Watch', handle: 'stainless-steel-watch', description: 'Minimalist stainless steel analog watch with Japanese quartz movement.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1524592094714-0f0654e20314?w=600&q=80', collection_id: colIds['new-arrivals'], options: [{ title: 'Band' }], variants: [{ title: 'Steel Band', prices: [{ currency_code: 'usd', amount: 24999 }], options: [{ value: 'Steel Band' }], inventory_quantity: 20, manage_inventory: false }, { title: 'Leather Band', prices: [{ currency_code: 'usd', amount: 22999 }], options: [{ value: 'Leather Band' }], inventory_quantity: 20, manage_inventory: false }] },
+    { title: 'Organic Cotton Hoodie', handle: 'organic-cotton-hoodie', description: 'Cozy organic cotton hoodie with kangaroo pocket.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=600&q=80', collection_id: colIds['best-sellers'], options: [{ title: 'Size' }], variants: [{ title: 'S', prices: [{ currency_code: 'usd', amount: 6999 }], options: [{ value: 'S' }], inventory_quantity: 60, manage_inventory: false }, { title: 'M', prices: [{ currency_code: 'usd', amount: 6999 }], options: [{ value: 'M' }], inventory_quantity: 60, manage_inventory: false }, { title: 'L', prices: [{ currency_code: 'usd', amount: 6999 }], options: [{ value: 'L' }], inventory_quantity: 60, manage_inventory: false }] },
+    { title: 'Portable Power Bank', handle: 'portable-power-bank', description: '20000mAh portable charger with USB-C fast charging.', status: 'published', thumbnail: 'https://images.unsplash.com/photo-1609091839311-d5365f9ff1c5?w=600&q=80', collection_id: colIds['new-arrivals'], options: [{ title: 'Capacity' }], variants: [{ title: '10000mAh', prices: [{ currency_code: 'usd', amount: 3499 }], options: [{ value: '10000mAh' }], inventory_quantity: 50, manage_inventory: false }, { title: '20000mAh', prices: [{ currency_code: 'usd', amount: 4999 }], options: [{ value: '20000mAh' }], inventory_quantity: 50, manage_inventory: false }] },
+  ];
+
+  let created = 0;
+  for (const p of products) {
+    const pr = await req('POST', '/admin/products', p, tk);
+    if (pr.data && pr.data.product) created++;
+    else console.log('SEED_PRODUCT_ERR:' + p.handle + ' s=' + pr.status);
+  }
+  console.log('SEED_PRODUCTS:created ' + created);
+
+  await req('POST', '/admin/store', { name: 'Demo Store', default_currency_code: 'usd' }, tk);
+  console.log('SEED_COMPLETE:ok');
+}
+seed().catch(e => console.log('SEED_FATAL:' + e.message));
+`.trim();
+
+  return `node -e '${nodeScript.replace(/'/g, "'\\''")}'`;
+}
+
+/**
  * Set up a freshly-provisioned MedusaJS store.
  * Steps:
  *   1. Find Medusa pod
  *   2. Verify health endpoint
  *   3. Seed admin user via medusa CLI
+ *   4. Seed demo data (region, shipping, collections, categories, products)
  * 
  * Each step is idempotent and failures are non-fatal.
  * @param {Object} params
@@ -543,21 +706,31 @@ async function setupMedusa({ namespace, storeId, credentials }) {
   }
 
   // Step 3: Create admin user via medusa CLI (idempotent — will skip if user exists)
+  const adminEmail = credentials.adminEmail || 'admin@medusa.local';
+  const adminPassword = credentials.adminPassword;
   try {
-    const email = credentials.adminEmail || 'admin@medusa.local';
-    const password = credentials.adminPassword;
-
     await kubectlExecMedusa({
       namespace,
       podName,
-      command: `npx medusa user -e "${email}" -p "${password}" 2>&1 || echo "USER_CREATE_SKIP"`,
+      command: `npx medusa user -e "${adminEmail}" -p "${adminPassword}" 2>&1 || echo "USER_CREATE_SKIP"`,
       timeoutMs: 60000,
     });
     results.adminUser = 'created';
-    logger.info('Medusa admin user created', { storeId, email });
+    logger.info('Medusa admin user created', { storeId, email: adminEmail });
   } catch (err) {
     logger.warn('Medusa admin user creation failed', { storeId, error: err.message });
     results.adminUser = `failed: ${err.message}`;
+  }
+
+  // Step 4: Seed demo data via Admin API
+  try {
+    results.seedData = await seedMedusaDemoData({
+      namespace, podName, storeId, adminEmail, adminPassword,
+    });
+    logger.info('Medusa demo data seeded', { storeId });
+  } catch (err) {
+    logger.warn('Medusa demo data seeding failed', { storeId, error: err.message });
+    results.seedData = `failed: ${err.message}`;
   }
 
   logger.info('MedusaJS setup completed', { storeId, results });

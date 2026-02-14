@@ -164,3 +164,77 @@ export async function getOrder(orderId) {
   const { order } = await request(`/store/orders/${orderId}`);
   return order;
 }
+
+export async function listCustomerOrders(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.limit)  qs.set('limit', params.limit);
+  if (params.offset) qs.set('offset', params.offset);
+  const query = qs.toString();
+  const { orders, count, limit, offset } = await request(
+    `/store/customers/me/orders${query ? '?' + query : ''}`
+  );
+  return { orders, count, limit, offset };
+}
+
+/* ── Customer Auth ──────────────────────────── */
+
+/** Login with email + password. Sets session cookie. */
+export async function customerLogin(email, password) {
+  const { customer } = await request('/store/auth', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  return customer;
+}
+
+/** Check current session — returns customer or throws 401. */
+export async function getSession() {
+  const { customer } = await request('/store/auth');
+  return customer;
+}
+
+/** Logout — destroys session cookie. */
+export async function customerLogout() {
+  await request('/store/auth', { method: 'DELETE' });
+}
+
+/** Register a new customer account. */
+export async function customerRegister({ first_name, last_name, email, password, phone }) {
+  const { customer } = await request('/store/customers', {
+    method: 'POST',
+    body: JSON.stringify({ first_name, last_name, email, password, phone }),
+  });
+  return customer;
+}
+
+/** Get current customer profile. */
+export async function getCustomer() {
+  const { customer } = await request('/store/customers/me');
+  return customer;
+}
+
+/** Update current customer profile. */
+export async function updateCustomer(data) {
+  const { customer } = await request('/store/customers/me', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return customer;
+}
+
+/* ── Admin Auth ─────────────────────────────── */
+
+/** Admin login — returns user + JWT token. */
+export async function adminLogin(email, password) {
+  const data = await request('/admin/auth', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  return data; // { user }
+}
+
+/** Get admin session. */
+export async function getAdminSession() {
+  const data = await request('/admin/auth');
+  return data; // { user }
+}
