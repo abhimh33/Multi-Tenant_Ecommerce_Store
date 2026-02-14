@@ -20,44 +20,85 @@
 ## Architecture Overview
 
 ```
-                  ┌──────────────────────────┐
-                  │   React Dashboard (SPA)  │
-                  └────────────┬─────────────┘
-                               │  REST / JWT
-                  ┌────────────▼─────────────┐
-                  │  Node.js Control Plane    │
-                  │  ┌─────────────────────┐  │
-                  │  │ Provisioner Service  │  │◄── Orchestrator
-                  │  │  ├── Helm Service    │  │
-                  │  │  ├── K8s Service     │  │
-                  │  │  └── Setup Service   │  │
-                  │  ├─────────────────────┤  │
-                  │  │ Guardrails           │  │◄── Rate limit, circuit breaker, env validation
-                  │  │ Audit Service        │  │◄── Every event logged
-                  │  └─────────────────────┘  │
-                  └─────┬──────────┬──────────┘
-                        │ SQL      │ kubectl / helm
-               ┌────────▼───┐  ┌──▼────────────────────────────────┐
-               │ PostgreSQL  │  │ Kubernetes Cluster                │
-               │ (control    │  │  ┌──────────────────────────────┐ │
-               │  plane DB)  │  │  │ ns: store-abc  (WooCommerce) │ │
-               └─────────────┘  │  │  WordPress + MariaDB + PVC   │ │
-                                │  └──────────────────────────────┘ │
-                                │  ┌──────────────────────────────┐ │
-                                │  │ ns: store-xyz  (MedusaJS)    │ │
-                                │  │  Medusa + PostgreSQL + PVC   │ │
-                                │  └──────────────────────────────┘ │
-                                └───────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                           User-Facing Layer                               │
+│                                                                           │
+│  ┌─────────────────────────────┐     ┌──────────────────────────────────┐ │
+│  │   React Dashboard (SPA)     │     │   MedusaJS Storefront (SPA)     │ │
+│  │   frontend/ · :5173         │     │   storefront-medusa/ · :3000    │ │
+│  │                              │     │                                  │ │
+│  │  Store CRUD, audit logs,    │     │  Hero, product catalog, cart    │ │
+│  │  user auth, monitoring      │     │  drawer, 3-step checkout, order │ │
+│  │  React · shadcn/ui · Axios  │     │  React 18 · Tailwind · Vite    │ │
+│  └──────────────┬──────────────┘     │  Pure fetch Medusa Store API v1 │ │
+│                 │                     └────────────────┬─────────────────┘ │
+│                 │ REST API (JWT)                       │ Medusa Store API  │
+└─────────────────┼─────────────────────────────────────┼───────────────────┘
+                  │                                     │
+┌─────────────────▼─────────────────────────────────────┼───────────────────┐
+│              Node.js Control Plane · :3001             │                   │
+│  ┌──────────────────────────────────────────────┐     │                   │
+│  │ Provisioner Service (Orchestrator)           │     │                   │
+│  │  ├── Helm Service    (helm upgrade --install)│     │                   │
+│  │  ├── K8s Service     (namespace, readiness)  │     │                   │
+│  │  └── Setup Service   (WP-CLI / Medusa CLI)   │     │                   │
+│  ├──────────────────────────────────────────────┤     │                   │
+│  │ Guardrails: rate limit, circuit breaker,     │     │                   │
+│  │   env validation, optimistic locking         │     │                   │
+│  │ State Machine: requested → provisioning →    │     │                   │
+│  │   ready → deleting → deleted (+ failed)      │     │                   │
+│  │ Audit Service: every event logged            │     │                   │
+│  │ Prometheus Metrics: /metrics endpoint        │     │                   │
+│  └──────────────────────────────────────────────┘     │                   │
+└─────┬──────────────┬──────────────────────────────────┼───────────────────┘
+      │ SQL           │ kubectl / helm                   │
+┌─────▼────────┐  ┌───▼─────────────────────────────────▼───────────────────┐
+│ PostgreSQL   │  │              Kubernetes Cluster                          │
+│ (control     │  │                                                          │
+│  plane DB)   │  │  ┌────────────────────────────────────────────────────┐  │
+│  PG 16       │  │  │  Namespace: store-abc12345 (WooCommerce)          │  │
+│  port 5433   │  │  │                                                    │  │
+└──────────────┘  │  │  ┌──────────────────┐  ┌───────────────────────┐  │  │
+                  │  │  │ WordPress Pod     │  │ MariaDB StatefulSet   │  │  │
+                  │  │  │ WP 6.7 · PHP 8.2  │  │ MariaDB 11.4 + PVC   │  │  │
+                  │  │  │ WooCommerce 9.5.2 │  └───────────────────────┘  │  │
+                  │  │  │ Theme: Astra /    │                             │  │
+                  │  │  │  Storefront       │  Ingress: *.localhost       │  │
+                  │  │  │ Products + COD    │  NetworkPolicy · Quota      │  │
+                  │  │  └──────────────────┘                              │  │
+                  │  └────────────────────────────────────────────────────┘  │
+                  │                                                          │
+                  │  ┌────────────────────────────────────────────────────┐  │
+                  │  │  Namespace: store-xyz98765 (MedusaJS)             │  │
+                  │  │                                                    │  │
+                  │  │  ┌──────────────────┐  ┌───────────────────────┐  │  │
+                  │  │  │ Medusa Pod        │  │ PostgreSQL            │  │  │
+                  │  │  │ v1.20 · Node.js   │  │ StatefulSet + PVC    │  │  │
+                  │  │  │ Store API v1      │  │ PG 16 Alpine         │  │  │
+                  │  │  └──────────────────┘  └───────────────────────┘  │  │
+                  │  │                                                    │  │
+                  │  │  ┌──────────────────┐  Ingress: *.localhost       │  │
+                  │  │  │ Storefront Pod   │  NetworkPolicy · Quota      │  │
+                  │  │  │ nginx + React SPA│  (opt-in: storefront.       │  │
+                  │  │  └──────────────────┘    enabled=true)            │  │
+                  │  └────────────────────────────────────────────────────┘  │
+                  │                                                          │
+                  │  Per-namespace: NetworkPolicy · ResourceQuota ·          │
+                  │                 LimitRange · Secrets · PVCs              │
+                  └──────────────────────────────────────────────────────────┘
 ```
 
-The platform has two planes:
+The platform has three layers:
 
-| Plane | Purpose | Technology |
+| Layer | Purpose | Technology |
 |-------|---------|-----------|
-| **Control plane** | Manages store lifecycle, auth, audit | Express + PostgreSQL |
-| **Data plane** | Runs the actual e-commerce stores | Kubernetes + Helm per namespace |
+| **User-facing** | Admin dashboard + customer-facing storefront | React Dashboard (shadcn/ui), MedusaJS Storefront SPA (Tailwind) |
+| **Control plane** | Manages store lifecycle, auth, audit, metrics | Express + PostgreSQL + Helm CLI + kubectl |
+| **Data plane** | Runs the actual e-commerce stores | Kubernetes namespaces with engine-specific pods, databases, and ingress |
 
 The control plane never directly handles e-commerce traffic. It uses `helm install/uninstall` and `kubectl exec` to manage stores, keeping concerns cleanly separated.
+
+The MedusaJS Storefront SPA (`storefront-medusa/`) is a fully decoupled React application that communicates directly with a Medusa backend's Store API v1. It can be deployed standalone (for development) or as an optional nginx pod within the store's namespace (for production, via `storefront.enabled=true` in Helm values).
 
 ---
 
