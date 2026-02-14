@@ -20,6 +20,9 @@ if (process.env.NODE_ENV !== 'production') {
 const config = {
   env: process.env.NODE_ENV || 'development',
   isDev: (process.env.NODE_ENV || 'development') === 'development',
+  isStaging: process.env.NODE_ENV === 'staging',
+  isProd: process.env.NODE_ENV === 'production',
+  isTest: process.env.NODE_ENV === 'test',
 
   server: {
     port: parseInt(process.env.PORT, 10) || 3001,

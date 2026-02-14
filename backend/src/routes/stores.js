@@ -6,6 +6,7 @@ const router = express.Router();
 const storeController = require('../controllers/storeController');
 const { authenticateToken } = require('../middleware/auth');
 const { validate, createStoreSchema, listStoresSchema, storeIdSchema, logsQuerySchema } = require('../middleware/validators');
+const requestTimeout = require('../middleware/requestTimeout');
 
 // All store routes require authentication
 router.use(authenticateToken);
@@ -19,9 +20,10 @@ router.use(authenticateToken);
 
 const { enforceStoreLimit, enforceCreationCooldown } = require('../middleware/guardrails');
 
-// Create a new store (with limit + cooldown enforcement)
+// Create a new store (with limit + cooldown enforcement, extended timeout for provisioning)
 router.post(
   '/',
+  requestTimeout(600000), // 10 minutes for provisioning
   validate(createStoreSchema, 'body'),
   enforceStoreLimit,
   enforceCreationCooldown,

@@ -3,6 +3,7 @@
 const userService = require('../services/userService');
 const storeRegistry = require('../services/storeRegistry');
 const storeSetupService = require('../services/storeSetupService');
+const { recordFailedAttempt, clearLockout } = require('../middleware/loginLimiter');
 const logger = require('../utils/logger').child('auth-controller');
 
 async function register(req, res, next) {
@@ -65,6 +66,7 @@ async function login(req, res, next) {
     const user = await userService.authenticate({ email, password });
 
     if (!user) {
+      recordFailedAttempt(email);
       return res.status(401).json({
         requestId: req.requestId,
         error: {
@@ -75,6 +77,8 @@ async function login(req, res, next) {
       });
     }
 
+    // Successful login — clear any lockout state
+    clearLockout(email);
     const token = userService.generateToken(user);
 
     logger.info('User logged in', { userId: user.id, email: user.email });

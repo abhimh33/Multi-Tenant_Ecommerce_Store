@@ -6,7 +6,7 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const { authenticateToken } = require('../middleware/auth');
 const { validate, registerSchema, loginSchema, changePasswordSchema } = require('../middleware/validators');
-const { loginLimiter, registerLimiter } = require('../middleware/loginLimiter');
+const { loginLimiter, registerLimiter, checkAccountLockout } = require('../middleware/loginLimiter');
 
 // POST /api/v1/auth/register (rate limited: 5/hour per IP)
 router.post(
@@ -16,10 +16,11 @@ router.post(
   authController.register
 );
 
-// POST /api/v1/auth/login (rate limited: 10/15min per IP+email)
+// POST /api/v1/auth/login (rate limited: 10/15min per IP+email, with account lockout)
 router.post(
   '/login',
   loginLimiter,
+  checkAccountLockout,
   validate(loginSchema, 'body'),
   authController.login
 );

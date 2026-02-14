@@ -40,12 +40,11 @@ describe('Environment Validator', () => {
     expect(() => validateEnv({ LOG_LEVEL: 'superverbose' })).toThrow('Environment validation failed');
   });
 
-  it('warns about default JWT_SECRET in production', () => {
-    const { warnings } = validateEnv({
+  it('hard-fails on default JWT_SECRET in production', () => {
+    expect(() => validateEnv({
       NODE_ENV: 'production',
       JWT_SECRET: 'dev-jwt-secret-change-in-production',
-    });
-    expect(warnings.some(w => w.includes('JWT_SECRET'))).toBe(true);
+    })).toThrow('FATAL: JWT_SECRET must be set to a secure value');
   });
 
   it('warns about missing CORS_ORIGIN in production', () => {

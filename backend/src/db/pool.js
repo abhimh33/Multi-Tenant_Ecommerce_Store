@@ -15,6 +15,8 @@ const pool = new Pool({
   max: config.database.pool.max,
   idleTimeoutMillis: config.database.pool.idleTimeoutMs,
   connectionTimeoutMillis: 5000,
+  statement_timeout: 30000,         // Kill queries running > 30s
+  query_timeout: 30000,             // Abort client-side after 30s
 });
 
 pool.on('error', (err) => {
@@ -100,11 +102,39 @@ async function close() {
   await pool.end();
 }
 
+/**
+ * Wait for database connectivity with retries.
+ * Used at startup to handle slow/cold database containers.
+ * @param {number} maxRetries - Maximum connection attempts (default: 5)
+ * @param {number} delayMs - Delay between retries in ms (default: 3000)
+ * @returns {Promise<void>}
+ * @throws {Error} If all retries are exhausted
+ */
+async function waitForConnection(maxRetries = 5, delayMs = 3000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await pool.query('SELECT 1');
+      logger.info('Database connection established', { attempt });
+      return;
+    } catch (err) {
+      logger.warn(`Database connection attempt ${attempt}/${maxRetries} failed`, {
+        error: err.message,
+        nextRetryMs: attempt < maxRetries ? delayMs : 'none',
+      });
+      if (attempt === maxRetries) {
+        throw new Error(`Failed to connect to database after ${maxRetries} attempts: ${err.message}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 module.exports = {
   query,
   getClient,
   withTransaction,
   healthCheck,
   close,
+  waitForConnection,
   pool, // exposed for migration scripts
 };

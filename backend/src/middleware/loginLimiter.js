@@ -11,6 +11,84 @@ const logger = require('../utils/logger').child('login-limiter');
  * After exhausting attempts, returns 429 with a clear retry-after message.
  */
 
+// ─── Account Lockout ─────────────────────────────────────────────────────────
+// Tracks consecutive failed login attempts per email.
+// Locks account temporarily after MAX_FAILED_ATTEMPTS.
+
+const MAX_FAILED_ATTEMPTS = parseInt(process.env.ACCOUNT_LOCKOUT_MAX_ATTEMPTS, 10) || 5;
+const LOCKOUT_DURATION_MS = parseInt(process.env.ACCOUNT_LOCKOUT_DURATION_MS, 10) || 15 * 60 * 1000; // 15 min
+
+// email → { failures: number, lockedUntil: number|null }
+const accountLockouts = new Map();
+
+/**
+ * Record a failed login attempt. Locks account after MAX_FAILED_ATTEMPTS.
+ * @param {string} email
+ */
+function recordFailedAttempt(email) {
+  const key = email.toLowerCase().trim();
+  const entry = accountLockouts.get(key) || { failures: 0, lockedUntil: null };
+  entry.failures += 1;
+
+  if (entry.failures >= MAX_FAILED_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
+    logger.warn('Account temporarily locked due to repeated failed attempts', {
+      email: key,
+      failures: entry.failures,
+      lockedUntilISO: new Date(entry.lockedUntil).toISOString(),
+    });
+  }
+
+  accountLockouts.set(key, entry);
+
+  // Periodic cleanup of old entries to prevent memory leak
+  if (accountLockouts.size > 50000) {
+    const now = Date.now();
+    for (const [k, v] of accountLockouts) {
+      if (!v.lockedUntil || v.lockedUntil < now) accountLockouts.delete(k);
+    }
+  }
+}
+
+/**
+ * Clear lockout on successful login.
+ * @param {string} email
+ */
+function clearLockout(email) {
+  accountLockouts.delete(email.toLowerCase().trim());
+}
+
+/**
+ * Middleware: check if the account is currently locked out.
+ * Must be placed BEFORE the login handler.
+ */
+function checkAccountLockout(req, res, next) {
+  const email = req.body?.email?.toLowerCase()?.trim();
+  if (!email) return next();
+
+  const entry = accountLockouts.get(email);
+  if (entry && entry.lockedUntil) {
+    const now = Date.now();
+    if (now < entry.lockedUntil) {
+      const remainingSec = Math.ceil((entry.lockedUntil - now) / 1000);
+      logger.warn('Login blocked — account locked', { email, remainingSec });
+      return res.status(423).json({
+        requestId: req.requestId,
+        error: {
+          code: 'ACCOUNT_LOCKED',
+          message: `Account temporarily locked due to too many failed attempts. Try again in ${Math.ceil(remainingSec / 60)} minutes.`,
+          suggestion: 'Wait for the lockout period to expire, then try again with the correct credentials.',
+          retryable: true,
+          retryAfterSeconds: remainingSec,
+        },
+      });
+    }
+    // Lockout expired — clear it
+    accountLockouts.delete(email);
+  }
+  next();
+}
+
 const loginLimiter = rateLimit({
   windowMs: parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes
   max: parseInt(process.env.LOGIN_RATE_LIMIT_MAX, 10) || 10,
@@ -70,4 +148,10 @@ const registerLimiter = rateLimit({
   },
 });
 
-module.exports = { loginLimiter, registerLimiter };
+module.exports = {
+  loginLimiter,
+  registerLimiter,
+  checkAccountLockout,
+  recordFailedAttempt,
+  clearLockout,
+};

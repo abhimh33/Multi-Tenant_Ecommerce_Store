@@ -319,4 +319,39 @@ describe('Validation Schemas', () => {
       expect(error).toBeDefined();
     });
   });
+
+  // ─── Profanity Filter ─────────────────────────────────────────────────
+  describe('profanity filter', () => {
+    it('rejects store names containing profanity', () => {
+      const { error } = createStoreSchema.validate({
+        name: 'my-fuck-store',
+        engine: 'medusa',
+      });
+      expect(error).toBeDefined();
+    });
+
+    it('rejects profanity as exact store name', () => {
+      const { error } = createStoreSchema.validate({
+        name: 'porn',
+        engine: 'woocommerce',
+      });
+      expect(error).toBeDefined();
+    });
+
+    it('rejects embedded profanity', () => {
+      const { error } = createStoreSchema.validate({
+        name: 'mykillershop',
+        engine: 'medusa',
+      });
+      expect(error).toBeDefined();
+    });
+
+    it('allows clean store names', () => {
+      const { error } = createStoreSchema.validate({
+        name: 'awesome-shop',
+        engine: 'medusa',
+      });
+      expect(error).toBeUndefined();
+    });
+  });
 });

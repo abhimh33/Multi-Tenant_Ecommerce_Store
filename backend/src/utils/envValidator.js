@@ -11,7 +11,7 @@ const Joi = require('joi');
 const envSchema = Joi.object({
   // ─── Server ────────────────────────────────────────────────────────────
   NODE_ENV: Joi.string()
-    .valid('development', 'production', 'test')
+    .valid('development', 'staging', 'production', 'test')
     .default('development'),
   PORT: Joi.number().integer().min(1).max(65535).default(3001),
   HOST: Joi.string().default('0.0.0.0'),
@@ -72,7 +72,11 @@ const envSchema = Joi.object({
   CB_HALF_OPEN_MAX: Joi.number().integer().min(1).default(2),
 
   // ─── Guardrails ───────────────────────────────────────────────────────
-  STORE_CREATION_COOLDOWN_MS: Joi.number().integer().min(0).default(30000), // 30s
+  STORE_CREATION_COOLDOWN_MS: Joi.number().integer().min(0).default(300000), // 5 min
+
+  // ─── Account Lockout ──────────────────────────────────────────────────
+  ACCOUNT_LOCKOUT_MAX_ATTEMPTS: Joi.number().integer().min(1).default(5),
+  ACCOUNT_LOCKOUT_DURATION_MS: Joi.number().integer().min(1000).default(900000), // 15 min
 
   // ─── kubectl ──────────────────────────────────────────────────────────
   KUBECTL_BIN: Joi.string().default('kubectl'),
@@ -102,16 +106,22 @@ function validateEnv(env = process.env) {
     );
   }
 
-  // Production warnings
-  if (value.NODE_ENV === 'production') {
+  // Production and staging hardening
+  if (value.NODE_ENV === 'production' || value.NODE_ENV === 'staging') {
     if (value.JWT_SECRET === 'dev-jwt-secret-change-in-production') {
-      warnings.push('WARNING: Using default JWT_SECRET in production — set JWT_SECRET env var.');
+      throw new Error(
+        'FATAL: JWT_SECRET must be set to a secure value in production/staging. ' +
+        'The default development secret is not allowed.'
+      );
     }
     if (!value.CORS_ORIGIN) {
       warnings.push('WARNING: CORS_ORIGIN not set in production — API is open to all origins.');
     }
     if (value.DATABASE_URL.includes('localhost')) {
       warnings.push('WARNING: DATABASE_URL points to localhost in production.');
+    }
+    if (value.LOG_LEVEL === 'debug' || value.LOG_LEVEL === 'silly') {
+      warnings.push('WARNING: LOG_LEVEL is set to debug/silly in production — consider using info or warn.');
     }
   }
 

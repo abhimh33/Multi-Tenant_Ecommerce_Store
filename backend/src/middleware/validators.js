@@ -50,6 +50,15 @@ const RESERVED_STORE_NAMES = new Set([
   'assets', 'public', 'private', 'config', 'settings',
 ]);
 
+// Profanity blocklist — prevents offensive store names
+const PROFANITY_BLOCKLIST = new Set([
+  'fuck', 'shit', 'ass', 'damn', 'bitch', 'bastard', 'dick', 'cock',
+  'pussy', 'cunt', 'whore', 'slut', 'nigger', 'nigga', 'faggot', 'fag',
+  'retard', 'porn', 'sex', 'xxx', 'anal', 'rape', 'pedo', 'nazi',
+  'hitler', 'kill', 'murder', 'terrorist', 'bomb', 'drug', 'crack',
+  'meth', 'heroin', 'cocaine', 'weed', 'marijuana',
+]);
+
 const createStoreSchema = Joi.object({
   name: Joi.string()
     .min(3)
@@ -62,6 +71,13 @@ const createStoreSchema = Joi.object({
       // No consecutive hyphens (DNS best practice)
       if (/--/.test(value)) {
         return helpers.error('string.pattern.base');
+      }
+      // Profanity filter — check if name contains blocked words
+      const nameLower = value.toLowerCase();
+      for (const word of PROFANITY_BLOCKLIST) {
+        if (nameLower.includes(word)) {
+          return helpers.error('any.custom', { message: 'Store name contains inappropriate language.' });
+        }
       }
       return value;
     })

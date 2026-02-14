@@ -13,7 +13,7 @@ const logger = require('../utils/logger').child('guardrails');
 const cooldownMap = new Map();
 const COOLDOWN_MS = process.env.STORE_CREATION_COOLDOWN_MS !== undefined
   ? parseInt(process.env.STORE_CREATION_COOLDOWN_MS, 10)
-  : 30000; // 30s
+  : 300000; // 5 minutes (production-grade cooldown)
 
 /**
  * Enforce per-user store creation limit.

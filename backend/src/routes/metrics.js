@@ -4,15 +4,20 @@ const express = require('express');
 const router = express.Router();
 const { serializeMetrics } = require('../utils/metrics');
 const { getAllStats } = require('../utils/circuitBreaker');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 /**
  * Metrics Routes — /api/v1/metrics
  * 
  * Prometheus-compatible metrics endpoint.
- * Returns all collected metrics in Prometheus exposition format.
+ * Protected by authentication — only admins can access.
  * 
  * Also exposes a JSON summary endpoint for human consumption.
  */
+
+// All metrics routes require admin authentication
+router.use(authenticateToken);
+router.use(requireRole('admin'));
 
 // GET /api/v1/metrics — Prometheus text format
 router.get('/', (req, res) => {

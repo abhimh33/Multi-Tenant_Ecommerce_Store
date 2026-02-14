@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const logger = require('./utils/logger');
 const requestContext = require('./middleware/requestContext');
+const requestTimeout = require('./middleware/requestTimeout');
 const errorHandler = require('./middleware/errorHandler');
 const { metricsMiddleware } = require('./utils/metrics');
 const storeRoutes = require('./routes/stores');
@@ -30,24 +31,54 @@ envWarnings.forEach(w => logger.warn(w));
  * Multi-Tenant Ecommerce Control Plane — Express Application
  * 
  * Startup sequence:
- * 1. Run database migrations
- * 2. Recover any stores stuck in transitional states
- * 3. Start HTTP server
+ * 1. Wait for database connectivity (with retries)
+ * 2. Run database migrations
+ * 3. Recover any stores stuck in transitional states
+ * 4. Start HTTP server
  * 
  * Shutdown sequence:
  * 1. Stop accepting new connections
- * 2. Wait for in-flight requests to complete
+ * 2. Drain in-flight requests (max 15s)
  * 3. Close database connections
  */
 
 const app = express();
 
 // ─── Security ────────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,          // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  crossOriginEmbedderPolicy: false, // Allow loading cross-origin resources (store assets)
+}));
+
+// CORS — restricted by domain in production
+const corsOrigin = config.isDev
+  ? '*'
+  : (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: config.isDev ? '*' : process.env.CORS_ORIGIN,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: config.isDev ? '*' : corsOrigin,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'X-Request-ID', 'Authorization'],
+  credentials: !config.isDev,
 }));
 
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
@@ -68,11 +99,38 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // ─── Body Parsing ────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '256kb' })); // Reduced default; store routes can override
+app.use(express.urlencoded({ extended: false, limit: '256kb' }));
+// ─── Request Timeout (30s default, store provisioning gets 10 min) ───────────
+app.use(requestTimeout(30000));
 // ─── Metrics Middleware (before routes) ───────────────────────────────────────
 app.use(metricsMiddleware);
 // ─── Request Context (tracing) ───────────────────────────────────────────────
 app.use(requestContext);
+
+// ─── In-flight Request Tracking ──────────────────────────────────────────────
+let inFlightRequests = 0;
+let shuttingDown = false;
+
+app.use((req, res, next) => {
+  if (shuttingDown) {
+    return res.status(503).json({
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Server is shutting down. Please retry.',
+        retryable: true,
+      },
+    });
+  }
+  inFlightRequests++;
+  let counted = true;
+  const decrement = () => {
+    if (counted) { inFlightRequests--; counted = false; }
+  };
+  res.on('finish', decrement);
+  res.on('close', decrement);
+  next();
+});
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api/v1/auth', authRoutes);
@@ -116,15 +174,19 @@ let server;
 
 async function start() {
   try {
-    // 1. Run database migrations
+    // 1. Wait for database connectivity (retries on cold start)
+    logger.info('Waiting for database connection...');
+    await db.waitForConnection();
+
+    // 2. Run database migrations
     logger.info('Running database migrations...');
     await runMigrations();
 
-    // 2. Recover stuck stores from any previous crash
+    // 3. Recover stuck stores from any previous crash
     logger.info('Checking for stuck stores...');
     await provisionerService.recoverStuckStores();
 
-    // 3. Start HTTP server
+    // 4. Start HTTP server
     server = app.listen(config.server.port, config.server.host, () => {
       logger.info(`Control plane started`, {
         port: config.server.port,
@@ -146,6 +208,7 @@ async function start() {
 
 async function shutdown() {
   logger.info('Shutting down control plane...');
+  shuttingDown = true;
 
   if (server) {
     // Stop accepting new connections
@@ -153,8 +216,19 @@ async function shutdown() {
       logger.info('HTTP server closed — no longer accepting connections');
     });
 
-    // Give in-flight requests time to finish (10s grace period)
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // Wait for in-flight requests to drain (max 15s)
+    const drainStart = Date.now();
+    const maxDrainMs = 15000;
+    while (inFlightRequests > 0 && (Date.now() - drainStart) < maxDrainMs) {
+      logger.info(`Draining ${inFlightRequests} in-flight request(s)...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    if (inFlightRequests > 0) {
+      logger.warn(`Force-closing with ${inFlightRequests} in-flight request(s) after ${maxDrainMs / 1000}s`);
+    } else {
+      logger.info('All in-flight requests drained');
+    }
   }
 
   // Close database pool (drains active queries)

@@ -11,7 +11,10 @@
     "test": "jest --runInBand",
     "test:unit": "jest --testPathPattern=tests/unit",
     "test:integration": "jest --testPathPattern=tests/integration",
-    "lint": "eslint src/"
+    "test:coverage": "jest --runInBand --coverage --coverageReporters=text --coverageReporters=lcov",
+    "test:ci": "jest --runInBand --ci --forceExit --coverage --coverageReporters=text --coverageReporters=lcov",
+    "lint": "eslint src/",
+    "validate": "node -e \"require('./src/utils/envValidator').validateEnv(); console.log('Environment valid');\""
   },
   "keywords": [
     "kubernetes",
