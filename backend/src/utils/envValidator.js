@@ -51,6 +51,9 @@ const envSchema = Joi.object({
   // ─── Store ─────────────────────────────────────────────────────────────
   STORE_DOMAIN_SUFFIX: Joi.string().default('.localhost'),
   STORE_NAMESPACE_PREFIX: Joi.string().default('store-'),
+  INGRESS_PORT: Joi.number().integer().min(1).max(65535).default(80),
+  AUTO_PORT_FORWARD: Joi.string().valid('true', 'false').default('false'),
+  AUTO_HOSTS_FILE: Joi.string().valid('true', 'false').default('true'),
 
   // ─── CORS ──────────────────────────────────────────────────────────────
   CORS_ORIGIN: Joi.string().optional(),

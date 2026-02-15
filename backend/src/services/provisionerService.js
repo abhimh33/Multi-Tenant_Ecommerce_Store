@@ -11,6 +11,7 @@ const { STATES, assertTransition, canDelete, canRetry } = require('../models/sto
 const { generateStoreId, storeIdToNamespace, storeIdToHelmRelease } = require('../utils/idGenerator');
 const { retryWithBackoff } = require('../utils/retry');
 const storeSetupService = require('./storeSetupService');
+const ingressService = require('./ingressService');
 const userService = require('./userService');
 const {
   NotFoundError,
@@ -486,7 +487,7 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
           storeSetupService.setupWooCommerce({
             namespace: store.namespace,
             storeId,
-            siteUrl: `http://${storeId}${config.store.domainSuffix}`,
+            siteUrl: config.buildStoreUrl(storeId),
             credentials,
             theme: store.theme || 'storefront',
           })
@@ -553,7 +554,7 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
     }
 
     // Step 6: Extract URLs
-    const storefrontUrl = `http://${storeId}${config.store.domainSuffix}`;
+    const storefrontUrl = config.buildStoreUrl(storeId);
     const adminUrl = store.engine === 'woocommerce'
       ? `${storefrontUrl}/wp-admin`
       : `${storefrontUrl}/admin`;
@@ -592,6 +593,12 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
       engine: store.engine,
       correlationId: cid,
       durationMs: provisioningDurationMs,
+    });
+
+    // Add hosts file entry for the store (non-blocking, non-fatal)
+    const storeHostname = `${storeId}${config.store.domainSuffix}`;
+    ingressService.addHostsEntry(storeHostname).catch(err => {
+      logger.warn('Failed to add hosts entry (non-fatal)', { storeId, hostname: storeHostname, error: err.message });
     });
 
     // Update metrics

@@ -49,6 +49,8 @@
 │  ├──────────────────────────────────────────────┤     │                   │
 │  │ Guardrails: rate limit, circuit breaker,     │     │                   │
 │  │   env validation, optimistic locking         │     │                   │
+│  │ Ingress Service: auto port-forward,          │     │                   │
+│  │   hosts file management (Docker Desktop)     │     │                   │
 │  │ State Machine: requested → provisioning →    │     │                   │
 │  │   ready → deleting → deleted (+ failed)      │     │                   │
 │  │ Audit Service: every event logged            │     │                   │
@@ -522,8 +524,7 @@ Moving from Docker Desktop to a real VPS or cloud environment requires changes a
 
 | Item | Local | Production |
 |------|-------|-----------|
-| Ingress | NGINX Ingress (Docker Desktop) | Traefik (bundled with k3s) |
-| TLS | None (HTTP) | cert-manager + Let's Encrypt (`letsencrypt-prod` ClusterIssuer) |
+| Ingress | NGINX Ingress (Docker Desktop) | Traefik (bundled with k3s) || Ingress access | Auto port-forward on port 8080 (`AUTO_PORT_FORWARD=true`) | Direct LoadBalancer on port 80/443 (`AUTO_PORT_FORWARD=false`, `INGRESS_PORT=80`) || TLS | None (HTTP) | cert-manager + Let's Encrypt (`letsencrypt-prod` ClusterIssuer) |
 | Values file | `values-local.yaml` | `values-vps.yaml` |
 
 ```yaml
@@ -598,6 +599,7 @@ When enabled, each store namespace gets a dedicated ServiceAccount with least-pr
 | **T6** | Post-install setup via `kubectl exec` | More brittle than a sidecar/init-container approach but avoids Helm hook timing issues and is easier to debug. |
 | **T7** | No store backup/restore | Individual store data is not backed up by the platform. Store-level backup would require PVC snapshots or engine-specific export tools. |
 | **T8** | Synchronous Helm CLI calls | The backend shells out to the `helm` binary. A Helm SDK (Go) or gRPC Tiller replacement would be more efficient but adds significant complexity for low-volume operations. |
+| **T9** | Auto port-forward for local ingress | Docker Desktop's WSL2 networking prevents the NGINX Ingress controller's LoadBalancer from binding to port 80. The backend auto-starts a `kubectl port-forward` on a configurable port (default 8080) and generates store URLs with the port included. This is a local-dev workaround — production deployments with real DNS and a cloud LoadBalancer set `INGRESS_PORT=80` and `AUTO_PORT_FORWARD=false`. |
 
 ---
 

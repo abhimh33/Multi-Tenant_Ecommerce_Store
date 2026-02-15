@@ -63,6 +63,9 @@ const config = {
   store: {
     domainSuffix: process.env.STORE_DOMAIN_SUFFIX || '.localhost',
     namespacePrefix: process.env.STORE_NAMESPACE_PREFIX || 'store-',
+    ingressPort: parseInt(process.env.INGRESS_PORT, 10) || 80,
+    autoPortForward: process.env.AUTO_PORT_FORWARD === 'true',
+    autoHostsFile: process.env.AUTO_HOSTS_FILE !== 'false', // default true
   },
 
   jwt: {
@@ -75,8 +78,18 @@ const config = {
   },
 };
 
+/**
+ * Build the base URL for a store, including port if non-standard.
+ * @param {string} storeId
+ * @returns {string} e.g. "http://store-abc123.localhost:8080" or "http://store-abc123.localhost"
+ */
+config.buildStoreUrl = function buildStoreUrl(storeId) {
+  const port = config.store.ingressPort;
+  const portSuffix = (port && port !== 80) ? `:${port}` : '';
+  return `http://${storeId}${config.store.domainSuffix}${portSuffix}`;
+};
+
 // Freeze to prevent runtime mutation
-Object.freeze(config);
 Object.freeze(config.server);
 Object.freeze(config.database);
 Object.freeze(config.database.pool);

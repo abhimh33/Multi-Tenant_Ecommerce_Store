@@ -23,6 +23,7 @@ const metricsRoutes = require('./routes/metrics');
 const { runMigrations } = require('./db/migrate');
 const db = require('./db/pool');
 const provisionerService = require('./services/provisionerService');
+const ingressService = require('./services/ingressService');
 
 // Log env validation warnings
 envWarnings.forEach(w => logger.warn(w));
@@ -192,9 +193,14 @@ async function start() {
         port: config.server.port,
         host: config.server.host,
         env: config.env,
+        ingressPort: config.store.ingressPort,
+        autoPortForward: config.store.autoPortForward,
         maxStoresPerUser: config.provisioning.maxStoresPerUser,
       });
     });
+
+    // 5. Start ingress port-forward (if configured for Docker Desktop)
+    await ingressService.startPortForward();
 
     // Graceful shutdown handlers
     process.on('SIGINT', shutdown);
@@ -242,6 +248,9 @@ async function shutdown() {
   } catch {
     // Semaphore drain is best-effort
   }
+
+  // Stop ingress port-forward
+  ingressService.stopPortForward();
 
   // Close database pool (drains active queries)
   await db.close();

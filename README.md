@@ -117,6 +117,7 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 │   │   │   ├── helmService.js          # Helm CLI wrapper
 │   │   │   ├── kubernetesService.js    # K8s namespace/pod management
 │   │   │   ├── storeSetupService.js    # WP-CLI / Medusa post-install setup
+│   │   │   ├── ingressService.js       # Auto port-forward & hosts file management
 │   │   │   ├── auditService.js         # Event audit trail
 │   │   │   └── storeRegistry.js        # PostgreSQL store CRUD
 │   │   ├── middleware/        # Auth, validation, error handling, rate limiting
@@ -241,12 +242,12 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main
 
 After the store reaches **ready** status the automated setup has already installed WooCommerce, the Storefront theme, configured Cash-on-Delivery (COD) payment, and created a **Sample Product ($19.99)**.
 
-1. Open the store URL shown on the dashboard (e.g. `http://store-<id>.localhost`)
+1. Open the store URL shown on the dashboard (e.g. `http://store-<id>.localhost:8080`)
 2. Browse the shop — you will see the "Sample Product"
 3. Click **Add to Cart → View Cart → Proceed to Checkout**
 4. Fill in billing details (any dummy data) and choose **Cash on Delivery**
 5. Click **Place Order** — you will see an order confirmation with an order number
-6. To verify in the admin panel, visit `http://store-<id>.localhost/wp-admin` and go to **WooCommerce → Orders**
+6. To verify in the admin panel, visit `http://store-<id>.localhost:8080/wp-admin` and go to **WooCommerce → Orders**
 
 > **MedusaJS stores**: The admin panel is available at port 9000 (`/app`). Use the admin credentials shown in the store detail page to log in, create products, and manage orders through the Medusa admin UI.
 >
@@ -324,9 +325,12 @@ npm test
 # Install NGINX Ingress Controller
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
 
-# Stores will be accessible at http://store-<id>.localhost
+# The backend auto-starts a kubectl port-forward on port 8080 (configurable via INGRESS_PORT)
+# Stores will be accessible at http://store-<id>.localhost:8080
 # The backend uses values-local.yaml automatically (HELM_VALUES_FILE=values-local.yaml)
 ```
+
+> **Docker Desktop Note**: On Docker Desktop, the NGINX Ingress controller's LoadBalancer cannot bind to port 80 due to WSL2 networking. The backend automatically manages a `kubectl port-forward` to the ingress controller on port 8080 (configurable via `INGRESS_PORT`). All store URLs include the port automatically. This is handled transparently — no manual steps required.
 
 ### K3s (VPS / Production)
 
@@ -417,6 +421,9 @@ npm ci && npm run build
 | `HELM_VALUES_FILE` | Helm values file to use | `values-local.yaml` |
 | `HELM_BIN` | Full path to Helm binary | `helm` (on PATH) |
 | `STORE_DOMAIN_SUFFIX` | Store URL suffix | `.localhost` |
+| `INGRESS_PORT` | Port for store ingress access (auto port-forward) | `80` |
+| `AUTO_PORT_FORWARD` | Auto-start kubectl port-forward on startup | `false` |
+| `AUTO_HOSTS_FILE` | Auto-manage /etc/hosts entries for stores | `true` |
 | `MAX_STORES_PER_USER` | Max active stores per tenant | `5` |
 | `STORE_CREATION_COOLDOWN_MS` | Cooldown between store creations (ms) | `30000` |
 | `PROVISIONING_TIMEOUT_MS` | Max provisioning wait time (ms) | `600000` |
