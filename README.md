@@ -205,14 +205,19 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 └──────────────────────────┼──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼────────────────────┐
+<<<<<<< HEAD
 │            Node.js Control Plane (Backend)    │
 │            Express · PostgreSQL · Helm CLI    │
+=======
+│       Node.js Control Plane (Backend)/ :3001  │
+│       Express · PostgreSQL · Helm CLI         │
+>>>>>>> 06abe2f2284d9b6f9f07706fe8cc4bb5f55292aa
 │   ┌──────────────────────────────────────┐    │
 │   │ Provisioner · Helm · K8s · Setup     │    │
 │   │ State Machine · Audit · Guardrails   │    │
 │   │ Circuit Breaker · Retry · Metrics    │    │
 │   └──────────────────────────────────────┘    │
-│            :3001                              │
+│                                               │
 └───────────────┬───────────────────────────────┘
                 │ kubectl / helm CLI
 ┌───────────────▼──────────────────────────────────────────────────────────┐
