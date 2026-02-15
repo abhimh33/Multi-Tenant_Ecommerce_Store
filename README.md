@@ -193,30 +193,29 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                          User-Facing Layer                             │
 │                                                                        │
-│   ┌────────────────────────┐     ┌──────────────────────────────────┐  │
-│   │   React Dashboard      │     │   MedusaJS Storefront SPA       │  │
-│   │   (frontend/)           │     │   (storefront-medusa/)           │  │
-│   │                         │     │                                  │  │
-│   │  Store CRUD, audit logs │     │  Hero, products, cart drawer,   │  │
-│   │  user auth, monitoring  │     │  3-step checkout, order confirm │  │
-│   │  :5173                  │     │  React 18 · Tailwind · Vite     │  │
-│   └───────────┬─────────────┘     │  :3000 (dev) / nginx (prod)     │  │
-│               │                    └──────────┬───────────────────────┘  │
-│               │ REST API (JWT)                │ Medusa Store API v1     │
-└───────────────┼───────────────────────────────┼──────────────────────────┘
-                │                               │
-┌───────────────▼───────────────────────────────┼──────────────────────────┐
-│            Node.js Control Plane (Backend)    │                          │
-│            Express · PostgreSQL · Helm CLI    │                          │
-│   ┌──────────────────────────────────────┐    │                          │
-│   │ Provisioner · Helm · K8s · Setup    │    │                          │
-│   │ State Machine · Audit · Guardrails  │    │                          │
-│   │ Circuit Breaker · Retry · Metrics   │    │                          │
-│   └──────────────────────────────────────┘    │                          │
-│            :3001                              │                          │
-└───────────────┬───────────────────────────────┼──────────────────────────┘
-                │ kubectl / helm CLI            │
-┌───────────────▼───────────────────────────────▼──────────────────────────┐
+│   ┌────────────────────────┐                                           │
+│   │   React Dashboard      │                                           │
+│   │   (frontend/)           │                                           │
+│   │                         │                                           │
+│   │  Store CRUD, audit logs │                                           │
+│   │  user auth, monitoring  │                                           │
+│   │  :5173                  │                                           │
+│   └───────────┬─────────────┘                                           │
+│               │ REST API (JWT)                                          │
+└───────────────┼──────────────────────────────────────────────────────────┘
+                │
+┌───────────────▼───────────────────────────────┐
+│            Node.js Control Plane (Backend)    │
+│            Express · PostgreSQL · Helm CLI    │
+│   ┌──────────────────────────────────────┐    │
+│   │ Provisioner · Helm · K8s · Setup    │    │
+│   │ State Machine · Audit · Guardrails  │    │
+│   │ Circuit Breaker · Retry · Metrics   │    │
+│   └──────────────────────────────────────┘    │
+│            :3001                              │
+└───────────────┬───────────────────────────────┘
+                │ kubectl / helm CLI
+┌───────────────▼──────────────────────────────────────────────────────────┐
 │                        Kubernetes Cluster                                │
 │                                                                          │
 │   ┌──────────────────────────────────────────────────────────────┐       │

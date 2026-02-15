@@ -27,38 +27,37 @@
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                           User-Facing Layer                               │
 │                                                                           │
-│  ┌─────────────────────────────┐     ┌──────────────────────────────────┐ │
-│  │   React Dashboard (SPA)     │     │   MedusaJS Storefront (SPA)     │ │
-│  │   frontend/ · :5173         │     │   storefront-medusa/ · :3000    │ │
-│  │                              │     │                                  │ │
-│  │  Store CRUD, audit logs,    │     │  Hero, product catalog, cart    │ │
-│  │  user auth, monitoring      │     │  drawer, 3-step checkout, order │ │
-│  │  React · shadcn/ui · Axios  │     │  React 18 · Tailwind · Vite    │ │
-│  └──────────────┬──────────────┘     │  Pure fetch Medusa Store API v1 │ │
-│                 │                     └────────────────┬─────────────────┘ │
-│                 │ REST API (JWT)                       │ Medusa Store API  │
-└─────────────────┼─────────────────────────────────────┼───────────────────┘
-                  │                                     │
-┌─────────────────▼─────────────────────────────────────┼───────────────────┐
-│              Node.js Control Plane · :3001             │                   │
-│  ┌──────────────────────────────────────────────┐     │                   │
-│  │ Provisioner Service (Orchestrator)           │     │                   │
-│  │  ├── Helm Service    (helm upgrade --install)│     │                   │
-│  │  ├── K8s Service     (namespace, readiness)  │     │                   │
-│  │  └── Setup Service   (WP-CLI / Medusa CLI)   │     │                   │
-│  ├──────────────────────────────────────────────┤     │                   │
-│  │ Guardrails: rate limit, circuit breaker,     │     │                   │
-│  │   env validation, optimistic locking         │     │                   │
-│  │ Ingress Service: auto port-forward,          │     │                   │
-│  │   hosts file management (Docker Desktop)     │     │                   │
-│  │ State Machine: requested → provisioning →    │     │                   │
-│  │   ready → deleting → deleted (+ failed)      │     │                   │
-│  │ Audit Service: every event logged            │     │                   │
-│  │ Prometheus Metrics: /metrics endpoint        │     │                   │
-│  └──────────────────────────────────────────────┘     │                   │
-└─────┬──────────────┬──────────────────────────────────┼───────────────────┘
-      │ SQL           │ kubectl / helm                   │
-┌─────▼────────┐  ┌───▼─────────────────────────────────▼───────────────────┐
+│  ┌─────────────────────────────┐                                          │
+│  │   React Dashboard (SPA)     │                                          │
+│  │   frontend/ · :5173         │                                          │
+│  │                              │                                          │
+│  │  Store CRUD, audit logs,    │                                          │
+│  │  user auth, monitoring      │                                          │
+│  │  React · shadcn/ui · Axios  │                                          │
+│  └──────────────┬──────────────┘                                          │
+│                 │ REST API (JWT)                                          │
+└─────────────────┼─────────────────────────────────────────────────────────┘
+                  │
+┌─────────────────▼─────────────────────────────────────┐
+│              Node.js Control Plane · :3001             │
+│  ┌──────────────────────────────────────────────┐     │
+│  │ Provisioner Service (Orchestrator)           │     │
+│  │  ├── Helm Service    (helm upgrade --install)│     │
+│  │  ├── K8s Service     (namespace, readiness)  │     │
+│  │  └── Setup Service   (WP-CLI / Medusa CLI)   │     │
+│  ├──────────────────────────────────────────────┤     │
+│  │ Guardrails: rate limit, circuit breaker,     │     │
+│  │   env validation, optimistic locking         │     │
+│  │ Ingress Service: auto port-forward,          │     │
+│  │   hosts file management (Docker Desktop)     │     │
+│  │ State Machine: requested → provisioning →    │     │
+│  │   ready → deleting → deleted (+ failed)      │     │
+│  │ Audit Service: every event logged            │     │
+│  │ Prometheus Metrics: /metrics endpoint        │     │
+│  └──────────────────────────────────────────────┘     │
+└─────┬──────────────┬──────────────────────────────────┘
+      │ SQL           │ kubectl / helm
+┌─────▼────────┐  ┌───▼─────────────────────────────────────────────────────┐
 │ PostgreSQL   │  │              Kubernetes Cluster                          │
 │ (control     │  │                                                          │
 │  plane DB)   │  │  ┌────────────────────────────────────────────────────┐  │
