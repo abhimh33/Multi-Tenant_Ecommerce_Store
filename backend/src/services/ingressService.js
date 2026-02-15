@@ -202,12 +202,14 @@ async function addHostsEntry(hostname) {
     logger.info(`Added hosts entry: ${hostname}`);
     return true;
   } catch (err) {
+    // Do NOT escalate to admin privileges — it triggers Windows UAC popups.
+    // .localhost domains resolve to 127.0.0.1 automatically on modern systems.
     if (err.code === 'EPERM' || err.code === 'EACCES') {
-      // Need admin privileges — try elevated write on Windows
-      return await addHostsEntryElevated(hostname);
+      logger.debug(`Hosts file write requires admin privileges (skipped to avoid UAC popup): ${hostname}`);
+      logger.debug('.localhost subdomains resolve to 127.0.0.1 automatically — hosts entry not required');
+      return false;
     }
-    logger.warn(`Failed to add hosts entry for ${hostname}: ${err.message}`);
-    logger.warn(`Please add manually: 127.0.0.1  ${hostname} → ${HOSTS_FILE}`);
+    logger.debug(`Hosts entry not added for ${hostname}: ${err.message} (non-fatal)`);
     return false;
   }
 }
@@ -219,46 +221,8 @@ async function writeHostsFile(content) {
   fs.writeFileSync(HOSTS_FILE, content, 'utf8');
 }
 
-/**
- * Try to add a hosts entry with elevated privileges (Windows only).
- */
-async function addHostsEntryElevated(hostname) {
-  if (process.platform !== 'win32') {
-    logger.warn(`Please run with sudo to manage hosts file, or add manually: 127.0.0.1  ${hostname}`);
-    return false;
-  }
-
-  try {
-    // Use PowerShell to add the entry with elevated privileges
-    const psCmd = `
-      $hostsPath = '${HOSTS_FILE}';
-      $content = Get-Content $hostsPath -Raw;
-      if ($content -notmatch '${hostname.replace(/\./g, '\\.')}') {
-        if ($content -match '${HOSTS_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}') {
-          $content = $content -replace '${HOSTS_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}', "127.0.0.1  ${hostname}\`n${HOSTS_MARKER_END}";
-        } else {
-          $content += "\`n${HOSTS_MARKER_START}\`n127.0.0.1  ${hostname}\`n${HOSTS_MARKER_END}\`n";
-        }
-        Set-Content -Path $hostsPath -Value $content -NoNewline;
-        Write-Host 'HOSTS_ADDED';
-      } else {
-        Write-Host 'HOSTS_EXISTS';
-      }
-    `.trim();
-
-    await execFileAsync('powershell', [
-      '-Command',
-      `Start-Process powershell -ArgumentList '-Command', '${psCmd.replace(/'/g, "''")}' -Verb RunAs -Wait -WindowStyle Hidden`,
-    ], { timeout: 30000 });
-
-    logger.info(`Added hosts entry (elevated): ${hostname}`);
-    return true;
-  } catch (err) {
-    logger.warn(`Failed to add hosts entry with elevation for ${hostname}: ${err.message}`);
-    logger.warn(`Please add manually: 127.0.0.1  ${hostname} → ${HOSTS_FILE}`);
-    return false;
-  }
-}
+// No elevated privilege escalation — .localhost domains resolve automatically.
+// This avoids Windows UAC popups during store provisioning.
 
 /**
  * Remove a hostname from the system hosts file.
@@ -279,13 +243,9 @@ async function removeHostsEntry(hostname) {
     try {
       fs.writeFileSync(HOSTS_FILE, updated, 'utf8');
     } catch {
-      if (process.platform === 'win32') {
-        const psCmd = `(Get-Content '${HOSTS_FILE}') | Where-Object { $_ -notmatch '${hostname.replace(/\./g, '\\.')}' } | Set-Content '${HOSTS_FILE}'`;
-        await execFileAsync('powershell', [
-          '-Command',
-          `Start-Process powershell -ArgumentList '-Command', '${psCmd.replace(/'/g, "''")}' -Verb RunAs -Wait -WindowStyle Hidden`,
-        ], { timeout: 30000 });
-      }
+      // Skip if no permission — avoid UAC popups
+      logger.debug(`Cannot remove hosts entry for ${hostname} (no write permission, non-fatal)`);
+      return false;
     }
 
     logger.info(`Removed hosts entry: ${hostname}`);
