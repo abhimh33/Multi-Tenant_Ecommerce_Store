@@ -25,29 +25,41 @@ All screenshots are taken from a live Kubernetes-backed environment with real pr
 
 ## 🛠 Control Plane — Admin Experience
 
-### Admin Dashboard
+<details>
+<summary><strong>Admin Dashboard</strong></summary>
+
 Global overview of all provisioned stores, lifecycle states (requested → provisioning → ready → failed), health indicators, and system metrics.
 
 ![Admin Dashboard](screenshots/admin-dashboard.png)
+</details>
 
-### Admin Audit Logs
+<details>
+<summary><strong>Admin Audit Logs</strong></summary>
+
 Comprehensive audit trail including login attempts, rate limits, account lockouts, provisioning steps, retries, and deletions.
 
 ![Admin Audit Logs](screenshots/admin-audit-logs.png)
+</details>
 
 ---
 
 ## 👤 Tenant Experience
 
-### Tenant Dashboard
+<details>
+<summary><strong>Tenant Dashboard</strong></summary>
+
 Tenant-isolated view showing only the user's stores with real-time provisioning progress.
 
 ![Tenant Dashboard](screenshots/user-dashboard.png)
+</details>
 
-### Create New Store
+<details>
+<summary><strong>Create New Store</strong></summary>
+
 Engine selection (WooCommerce / MedusaJS), guardrail validations, cooldown enforcement, and asynchronous provisioning workflow.
 
 ![Create Store](screenshots/user-create-store.png)
+</details>
 
 ---
 
@@ -59,29 +71,41 @@ Provisioned via Helm with WordPress 6.7, WooCommerce 9.5, MariaDB 11.4, namespac
 
 ## WooCommerce + Astra Theme
 
-### Storefront (Astra)
+<details>
+<summary><strong>Storefront (Astra)</strong></summary>
+
 Provisioned WooCommerce store using Astra theme with seeded product and Cash-on-Delivery checkout enabled.
 
 ![WooCommerce Astra Storefront](screenshots/woo-astra-store.png)
+</details>
 
-### WooCommerce Admin Dashboard (Astra)
+<details>
+<summary><strong>WooCommerce Admin Dashboard (Astra)</strong></summary>
+
 WordPress admin panel with WooCommerce orders, products, and configuration settings.
 
 ![WooCommerce Astra Admin](screenshots/woo-astra-admin.png)
+</details>
 
 ---
 
 ## WooCommerce + Storefront Theme
 
-### Storefront (Storefront Theme)
+<details>
+<summary><strong>Storefront (Storefront Theme)</strong></summary>
+
 Official WooCommerce Storefront theme with sample product and complete checkout flow.
 
 ![WooCommerce Storefront Theme](screenshots/woo-storefront-store.png)
+</details>
 
-### WooCommerce Admin Dashboard (Storefront)
+<details>
+<summary><strong>WooCommerce Admin Dashboard (Storefront)</strong></summary>
+
 WooCommerce backend dashboard for order management and analytics.
 
 ![WooCommerce Storefront Admin](screenshots/woo-storefront-admin.png)
+</details>
 
 ---
 
@@ -93,44 +117,60 @@ Provisioned with Medusa v1.20, PostgreSQL 16, and optional React storefront depl
 
 ## MedusaJS Storefront (React SPA)
 
-### Customer Storefront
+<details>
+<summary><strong>Customer Storefront</strong></summary>
+
 Standalone React + Vite + Tailwind storefront consuming Medusa Store API v1.
 
 ![Medusa Storefront](screenshots/medusa-storefront.png)
+</details>
 
-### Add to Cart & Checkout Flow
+<details>
+<summary><strong>Add to Cart & Checkout Flow</strong></summary>
+
 Cart drawer, 3-step checkout process, and order confirmation.
 
 ![Medusa Add to Cart](screenshots/medusa-add-to-cart.png)
 ![Medusa Checkout](screenshots/medusa-checkout.png)
+</details>
 
 ---
 
 ## Medusa Admin Dashboard
 
+<details>
+<summary><strong>Medusa Admin Dashboard</strong></summary>
+
 Product management, order handling, and store configuration.
 
 ![Medusa Admin Dashboard](screenshots/medusa-admin.png)
+</details>
 
 ---
 
 # 🔁 End-to-End Order Flow (WooCommerce)
 
-Complete purchase lifecycle:
+<details>
+<summary><strong>Complete Purchase Lifecycle</strong></summary>
 
 Browse Product → Add to Cart → Checkout → Order Confirmation → Admin Order View
 
 ![WooCommerce Checkout](screenshots/woo-checkout.png)
 ![WooCommerce Order Confirmation](screenshots/woo-order-confirmation.png)
+</details>
 
 ---
 
 # 🧱 Infrastructure Isolation (Optional)
 
+<details>
+<summary><strong>Kubernetes & Helm Resources</strong></summary>
+
 Namespace-per-store isolation and Helm release separation inside Kubernetes.
 
 ![Kubernetes Namespaces](screenshots/k8s-namespaces.png)
 ![Helm Releases](screenshots/helm-releases.png)
+</details>
 
 ---
 
