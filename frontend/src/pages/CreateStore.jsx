@@ -93,8 +93,8 @@ export default function CreateStore() {
                 <button
                   type="button"
                   className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${form.engine === 'woocommerce'
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50'
                     }`}
                   onClick={() => setForm({ ...form, engine: 'woocommerce', theme: 'storefront' })}
                 >
@@ -105,8 +105,8 @@ export default function CreateStore() {
                 <button
                   type="button"
                   className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${form.engine === 'medusa'
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50'
                     }`}
                   onClick={() => setForm({ ...form, engine: 'medusa', theme: '' })}
                 >
@@ -124,8 +124,8 @@ export default function CreateStore() {
                   <button
                     type="button"
                     className={`flex flex-col items-center gap-3 rounded-lg border-2 p-4 transition-colors ${form.theme === 'storefront'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
                       }`}
                     onClick={() => setForm({ ...form, theme: 'storefront' })}
                   >
@@ -136,8 +136,8 @@ export default function CreateStore() {
                   <button
                     type="button"
                     className={`flex flex-col items-center gap-3 rounded-lg border-2 p-4 transition-colors ${form.theme === 'astra'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
                       }`}
                     onClick={() => setForm({ ...form, theme: 'astra' })}
                   >
