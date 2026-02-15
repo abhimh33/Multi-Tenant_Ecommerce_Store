@@ -15,6 +15,127 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 - **MedusaJS storefront SPA**: Standalone React + Vite + Tailwind CSS storefront consuming Medusa Store API v1 — hero, product catalog, cart drawer, 3-step checkout, order confirmation
 - **Per-tenant branding**: Storefronts are configurable per tenant via environment variables (`VITE_STORE_NAME`, `VITE_MEDUSA_BACKEND_URL`)
 
+# 📸 Demo Screenshots
+
+This section demonstrates the Multi-Tenant E-commerce Provisioning Platform in action — including the control plane dashboard, tenant workflows, WooCommerce engine, MedusaJS engine, and full end-to-end order flow.
+
+All screenshots are taken from a live Kubernetes-backed environment with real provisioning, namespace isolation, Helm deployments, and automated engine setup enabled.
+
+---
+
+## 🛠 Control Plane — Admin Experience
+
+### Admin Dashboard
+Global overview of all provisioned stores, lifecycle states (requested → provisioning → ready → failed), health indicators, and system metrics.
+
+![Admin Dashboard](screenshots/admin-dashboard.png)
+
+### Admin Audit Logs
+Comprehensive audit trail including login attempts, rate limits, account lockouts, provisioning steps, retries, and deletions.
+
+![Admin Audit Logs](screenshots/admin-audit-logs.png)
+
+---
+
+## 👤 Tenant Experience
+
+### Tenant Dashboard
+Tenant-isolated view showing only the user's stores with real-time provisioning progress.
+
+![Tenant Dashboard](screenshots/user-dashboard.png)
+
+### Create New Store
+Engine selection (WooCommerce / MedusaJS), guardrail validations, cooldown enforcement, and asynchronous provisioning workflow.
+
+![Create Store](screenshots/user-create-store.png)
+
+---
+
+# 🛍 WooCommerce Engine
+
+Provisioned via Helm with WordPress 6.7, WooCommerce 9.5, MariaDB 11.4, namespace isolation, and automated WP-CLI setup.
+
+---
+
+## WooCommerce + Astra Theme
+
+### Storefront (Astra)
+Provisioned WooCommerce store using Astra theme with seeded product and Cash-on-Delivery checkout enabled.
+
+![WooCommerce Astra Storefront](screenshots/woo-astra-store.png)
+
+### WooCommerce Admin Dashboard (Astra)
+WordPress admin panel with WooCommerce orders, products, and configuration settings.
+
+![WooCommerce Astra Admin](screenshots/woo-astra-admin.png)
+
+---
+
+## WooCommerce + Storefront Theme
+
+### Storefront (Storefront Theme)
+Official WooCommerce Storefront theme with sample product and complete checkout flow.
+
+![WooCommerce Storefront Theme](screenshots/woo-storefront-store.png)
+
+### WooCommerce Admin Dashboard (Storefront)
+WooCommerce backend dashboard for order management and analytics.
+
+![WooCommerce Storefront Admin](screenshots/woo-storefront-admin.png)
+
+---
+
+# ⚡ MedusaJS Engine
+
+Provisioned with Medusa v1.20, PostgreSQL 16, and optional React storefront deployment.
+
+---
+
+## MedusaJS Storefront (React SPA)
+
+### Customer Storefront
+Standalone React + Vite + Tailwind storefront consuming Medusa Store API v1.
+
+![Medusa Storefront](screenshots/medusa-storefront.png)
+
+### Add to Cart & Checkout Flow
+Cart drawer, 3-step checkout process, and order confirmation.
+
+![Medusa Add to Cart](screenshots/medusa-add-to-cart.png)
+![Medusa Checkout](screenshots/medusa-checkout.png)
+
+---
+
+## Medusa Admin Dashboard
+
+Product management, order handling, and store configuration.
+
+![Medusa Admin Dashboard](screenshots/medusa-admin.png)
+
+---
+
+# 🔁 End-to-End Order Flow (WooCommerce)
+
+Complete purchase lifecycle:
+
+Browse Product → Add to Cart → Checkout → Order Confirmation → Admin Order View
+
+![WooCommerce Checkout](screenshots/woo-checkout.png)
+![WooCommerce Order Confirmation](screenshots/woo-order-confirmation.png)
+
+---
+
+# 🧱 Infrastructure Isolation (Optional)
+
+Namespace-per-store isolation and Helm release separation inside Kubernetes.
+
+![Kubernetes Namespaces](screenshots/k8s-namespaces.png)
+![Helm Releases](screenshots/helm-releases.png)
+
+---
+
+
+
 ## System Design & Tradeoffs
 
 See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
