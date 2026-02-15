@@ -190,7 +190,6 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 ## Architecture
 
 ```
-<<<<<<< HEAD
 ┌─────────────────────────────────────────────────────────────────┐
 │                      User-Facing Layer                          │
 │                                                                 │
@@ -206,23 +205,6 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 └──────────────────────────┼──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼────────────────────┐
-=======
-┌────────────────────────────────────────────────────────────────────────┐
-│                          User-Facing Layer                             │
-│                                                                        │
-│   ┌─────────────────────── ─┐                                          │
-│   │   React Dashboard       │                                          │
-│   │   (frontend/)           │                                          │
-│   │                         │                                          │
-│   │  Store CRUD, audit logs │                                          │
-│   │  user auth, monitoring  │                                          │
-│   │  :5173                  │                                          │
-│   └───────────┬─────────────┘                                          │
-│               │ REST API (JWT)                                         │
-└───────────────┼────────────────────────────────────────────────────────┘
-                │
-┌───────────────▼───────────────────────────────┐
->>>>>>> 6a349e2 (Resolved merge conflict)
 │            Node.js Control Plane (Backend)    │
 │            Express · PostgreSQL · Helm CLI    │
 │   ┌──────────────────────────────────────┐    │
