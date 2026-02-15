@@ -23,7 +23,7 @@ async function createStore(req, res, next) {
     res.status(202).json({
       requestId: req.requestId,
       message: 'Store creation initiated. Provisioning is in progress.',
-      store: formatStoreResponse(store),
+      store: formatStoreResponse(store, req.user),
     });
   } catch (err) {
     next(err);
@@ -50,7 +50,7 @@ async function listStores(req, res, next) {
 
     res.json({
       requestId: req.requestId,
-      stores: result.stores.map(formatStoreResponse),
+      stores: result.stores.map(s => formatStoreResponse(s, req.user)),
       total: result.total,
       limit: parseInt(limit, 10) || 50,
       offset: parseInt(offset, 10) || 0,
@@ -78,7 +78,7 @@ async function getStore(req, res, next) {
 
     res.json({
       requestId: req.requestId,
-      store: formatStoreResponse(store),
+      store: formatStoreResponse(store, req.user),
     });
   } catch (err) {
     next(err);
@@ -105,7 +105,7 @@ async function deleteStore(req, res, next) {
     res.status(202).json({
       requestId: req.requestId,
       message: 'Store deletion initiated.',
-      store: formatStoreResponse(store),
+      store: formatStoreResponse(store, req.user),
     });
   } catch (err) {
     next(err);
@@ -131,7 +131,7 @@ async function retryStore(req, res, next) {
     res.status(202).json({
       requestId: req.requestId,
       message: 'Store retry initiated. Provisioning will restart.',
-      store: formatStoreResponse(store),
+      store: formatStoreResponse(store, req.user),
     });
   } catch (err) {
     next(err);
@@ -173,10 +173,33 @@ async function getStoreLogs(req, res, next) {
 /**
  * Format a store record for API response.
  * Strips internal fields, structures URLs, adds computed fields.
+ * Admin credentials are only visible to the store owner — platform admins
+ * see masked values to protect tenant security.
  * @param {Object} store
+ * @param {Object} [requestingUser] - The authenticated user making the request
  * @returns {Object}
  */
-function formatStoreResponse(store) {
+function formatStoreResponse(store, requestingUser) {
+  const isOwner = requestingUser && store.ownerId === requestingUser.id;
+
+  // Mask credentials for non-owners (platform admins should not see tenant passwords)
+  let adminCredentials = null;
+  if (store.adminCredentials) {
+    if (isOwner) {
+      // Owner sees full credentials
+      adminCredentials = store.adminCredentials;
+    } else {
+      // Non-owner (platform admin) sees masked credentials
+      adminCredentials = {
+        ...store.adminCredentials,
+        password: store.adminCredentials.password ? '••••••••' : null,
+        email: store.adminCredentials.email
+          ? store.adminCredentials.email.replace(/^(.{2}).+(@.+)$/, '$1****$2')
+          : null,
+      };
+    }
+  }
+
   return {
     id: store.id,
     name: store.name,
@@ -188,7 +211,8 @@ function formatStoreResponse(store) {
       admin: store.adminUrl || null,
     },
     namespace: store.namespace,
-    adminCredentials: store.adminCredentials || null,
+    adminCredentials,
+    isCredentialOwner: isOwner,
     failureReason: store.failureReason || null,
     retryCount: store.retryCount,
     provisioningDurationMs: store.provisioningDurationMs || null,
