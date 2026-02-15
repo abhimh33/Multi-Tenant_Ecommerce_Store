@@ -24,68 +24,68 @@
 ## Architecture Overview
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│                           User-Facing Layer                               │
-│                                                                           │
-│  ┌─────────────────────────────┐                                          │
-│  │   React Dashboard (SPA)     │                                          │
-│  │   frontend/ · :5173         │                                          │
-│  │                              │                                          │
-│  │  Store CRUD, audit logs,    │                                          │
-│  │  user auth, monitoring      │                                          │
-│  │  React · shadcn/ui · Axios  │                                          │
-│  └──────────────┬──────────────┘                                          │
-│                 │ REST API (JWT)                                          │
-└─────────────────┼─────────────────────────────────────────────────────────┘
-                  │
-┌─────────────────▼─────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
+│                           User-Facing Layer                            │
+│                                                                        │
+│             ┌─────────────────────────────┐                            │
+│             │   React Dashboard (SPA)     │                            │
+│             │   frontend/ · :5173         │                            │
+│             │                             │                            │
+│             │  Store CRUD, audit logs,    │                            │
+│             │  user auth, monitoring      │                            │
+│             │  React · shadcn/ui · Axios  │                            │
+│             └──────────────┬──────────────┘                            │
+│                            │ REST API (JWT)                            │
+└────────────────────────────┼───────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼───────────────────────────┐
 │              Node.js Control Plane · :3001             │
-│  ┌──────────────────────────────────────────────┐     │
-│  │ Provisioner Service (Orchestrator)           │     │
-│  │  ├── Helm Service    (helm upgrade --install)│     │
-│  │  ├── K8s Service     (namespace, readiness)  │     │
-│  │  └── Setup Service   (WP-CLI / Medusa CLI)   │     │
-│  ├──────────────────────────────────────────────┤     │
-│  │ Guardrails: rate limit, circuit breaker,     │     │
-│  │   env validation, optimistic locking         │     │
-│  │ Ingress Service: auto port-forward,          │     │
-│  │   hosts file management (Docker Desktop)     │     │
-│  │ State Machine: requested → provisioning →    │     │
-│  │   ready → deleting → deleted (+ failed)      │     │
-│  │ Audit Service: every event logged            │     │
-│  │ Prometheus Metrics: /metrics endpoint        │     │
-│  └──────────────────────────────────────────────┘     │
-└─────┬──────────────┬──────────────────────────────────┘
+│  ┌──────────────────────────────────────────────┐      │
+│  │ Provisioner Service (Orchestrator)           │      │
+│  │  ├── Helm Service    (helm upgrade --install)│      │
+│  │  ├── K8s Service     (namespace, readiness)  │      │
+│  │  └── Setup Service   (WP-CLI / Medusa CLI)   │      │
+│  ├──────────────────────────────────────────────┤      │
+│  │ Guardrails: rate limit, circuit breaker,     │      │
+│  │   env validation, optimistic locking         │      │
+│  │ Ingress Service: auto port-forward,          │      │
+│  │   hosts file management (Docker Desktop)     │      │
+│  │ State Machine: requested → provisioning →    │      │
+│  │   ready → deleting → deleted (+ failed)      │      │
+│  │ Audit Service: every event logged            │      │
+│  │ Prometheus Metrics: /metrics endpoint        │      │
+│  └──────────────────────────────────────────────┘      │
+└─────┬───────────────┬──────────────────────────────────┘
       │ SQL           │ kubectl / helm
-┌─────▼────────┐  ┌───▼─────────────────────────────────────────────────────┐
+┌─────▼────────┐  ┌───▼──────────────────────────────────────────────────────┐
 │ PostgreSQL   │  │              Kubernetes Cluster                          │
 │ (control     │  │                                                          │
 │  plane DB)   │  │  ┌────────────────────────────────────────────────────┐  │
-│  PG 16       │  │  │  Namespace: store-abc12345 (WooCommerce)          │  │
+│  PG 16       │  │  │  Namespace: store-abc12345 (WooCommerce)           │  │
 │  port 5433   │  │  │                                                    │  │
-└──────────────┘  │  │  ┌──────────────────┐  ┌───────────────────────┐  │  │
-                  │  │  │ WordPress Pod     │  │ MariaDB StatefulSet   │  │  │
-                  │  │  │ WP 6.7 · PHP 8.2  │  │ MariaDB 11.4 + PVC   │  │  │
-                  │  │  │ WooCommerce 9.5.2 │  └───────────────────────┘  │  │
-                  │  │  │ Theme: Astra /    │                             │  │
-                  │  │  │  Storefront       │  Ingress: *.localhost       │  │
-                  │  │  │ Products + COD    │  NetworkPolicy · Quota      │  │
+└──────────────┘  │  │  ┌──────────────────┐  ┌───────────────────────┐   │  │
+                  │  │  │ WordPress Pod    │  │ MariaDB StatefulSet   │   │  │
+                  │  │  │ WP 6.7 · PHP 8.2 │  │ MariaDB 11.4 + PVC    │   │  │
+                  │  │  │ WooCommerce 9.5.2│  └───────────────────────┘   │  │
+                  │  │  │ Theme: Astra /   │                              │  │
+                  │  │  │  Storefront      │  Ingress: *.localhost        │  │
+                  │  │  │ Products + COD   │  NetworkPolicy · Quota       │  │
                   │  │  └──────────────────┘                              │  │
                   │  └────────────────────────────────────────────────────┘  │
                   │                                                          │
                   │  ┌────────────────────────────────────────────────────┐  │
-                  │  │  Namespace: store-xyz98765 (MedusaJS)             │  │
+                  │  │  Namespace: store-xyz98765 (MedusaJS)              │  │
                   │  │                                                    │  │
-                  │  │  ┌──────────────────┐  ┌───────────────────────┐  │  │
-                  │  │  │ Medusa Pod        │  │ PostgreSQL            │  │  │
-                  │  │  │ v1.20 · Node.js   │  │ StatefulSet + PVC    │  │  │
-                  │  │  │ Store API v1      │  │ PG 16 Alpine         │  │  │
-                  │  │  └──────────────────┘  └───────────────────────┘  │  │
+                  │  │  ┌──────────────────┐  ┌───────────────────────┐   │  │
+                  │  │  │ Medusa Pod       │  │ PostgreSQL            │   │  │
+                  │  │  │ v1.20 · Node.js  │  │ StatefulSet + PVC     │   │  │
+                  │  │  │ Store API v1     │  │ PG 16 Alpine          │   │  │
+                  │  │  └──────────────────┘  └───────────────────────┘   │  │
                   │  │                                                    │  │
-                  │  │  ┌──────────────────┐  Ingress: *.localhost       │  │
-                  │  │  │ Storefront Pod   │  NetworkPolicy · Quota      │  │
-                  │  │  │ nginx + React SPA│  (opt-in: storefront.       │  │
-                  │  │  └──────────────────┘    enabled=true)            │  │
+                  │  │  ┌──────────────────┐  Ingress: *.localhost        │  │
+                  │  │  │ Storefront Pod   │  NetworkPolicy · Quota       │  │
+                  │  │  │ nginx + React SPA│  (opt-in: storefront.        │  │
+                  │  │  └──────────────────┘    enabled=true)             │  │
                   │  └────────────────────────────────────────────────────┘  │
                   │                                                          │
                   │  Per-namespace: NetworkPolicy · ResourceQuota ·          │
