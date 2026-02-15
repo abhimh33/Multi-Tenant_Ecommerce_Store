@@ -190,27 +190,27 @@ See **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** for a detailed write-up covering:
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          User-Facing Layer                             │
-│                                                                        │
-│   ┌────────────────────────┐                                           │
-│   │   React Dashboard      │                                           │
-│   │   (frontend/)           │                                           │
-│   │                         │                                           │
-│   │  Store CRUD, audit logs │                                           │
-│   │  user auth, monitoring  │                                           │
-│   │  :5173                  │                                           │
-│   └───────────┬─────────────┘                                           │
-│               │ REST API (JWT)                                          │
-└───────────────┼──────────────────────────────────────────────────────────┘
-                │
-┌───────────────▼───────────────────────────────┐
+┌─────────────────────────────────────────────────────────────────┐
+│                      User-Facing Layer                          │
+│                                                                 │
+│              ┌────────────────────  ───┐                        │
+│              │   React Dashboard       │                        │
+│              │   (frontend/ . :5173)   │                        │
+│              │                         │                        │
+│              │  Store CRUD, audit logs │                        │
+│              │  user auth, monitoring  │                        │
+│              │                         │                        │
+│              └───────────┬─────────────┘                        │
+│                          │ REST API (JWT)                       │
+└──────────────────────────┼──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼────────────────────┐
 │            Node.js Control Plane (Backend)    │
 │            Express · PostgreSQL · Helm CLI    │
 │   ┌──────────────────────────────────────┐    │
-│   │ Provisioner · Helm · K8s · Setup    │    │
-│   │ State Machine · Audit · Guardrails  │    │
-│   │ Circuit Breaker · Retry · Metrics   │    │
+│   │ Provisioner · Helm · K8s · Setup     │    │
+│   │ State Machine · Audit · Guardrails   │    │
+│   │ Circuit Breaker · Retry · Metrics    │    │
 │   └──────────────────────────────────────┘    │
 │            :3001                              │
 └───────────────┬───────────────────────────────┘
