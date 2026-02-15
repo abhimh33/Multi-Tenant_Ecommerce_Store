@@ -48,14 +48,14 @@ const config = {
       ? path.resolve(__dirname, '..', process.env.HELM_CHART_PATH)
       : path.resolve(__dirname, '..', '..', 'helm', 'ecommerce-store'),
     valuesFile: process.env.HELM_VALUES_FILE || 'values-local.yaml',
-    timeout: process.env.HELM_TIMEOUT || '10m',
+    timeout: process.env.HELM_TIMEOUT || '5m',
     debug: process.env.HELM_DEBUG === 'true',
   },
 
   provisioning: {
     maxStoresPerUser: parseInt(process.env.MAX_STORES_PER_USER, 10) || 5,
     timeoutMs: parseInt(process.env.PROVISIONING_TIMEOUT_MS, 10) || 600000, // 10 min
-    pollIntervalMs: parseInt(process.env.PROVISIONING_POLL_INTERVAL_MS, 10) || 5000,
+    pollIntervalMs: parseInt(process.env.PROVISIONING_POLL_INTERVAL_MS, 10) || 3000,
     maxRetries: parseInt(process.env.PROVISIONING_MAX_RETRIES, 10) || 3,
     retryBaseDelayMs: parseInt(process.env.PROVISIONING_RETRY_BASE_DELAY_MS, 10) || 2000,
   },

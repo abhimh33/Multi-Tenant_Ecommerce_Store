@@ -412,27 +412,34 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
       );
     }
 
-    // Step 4: Poll for readiness
+    // Step 4: Quick readiness verification (helm --wait already polled for full readiness)
     await auditService.log({
       storeId,
       eventType: 'info',
-      message: 'Waiting for pods to become ready',
+      message: 'Verifying pod readiness (post helm --wait)',
       metadata: { correlationId: cid },
     });
 
-    const readiness = await timedStep(storeId, store.engine, PHASES.POD_READINESS, cid, () =>
-      k8sService.pollForReadiness(store.namespace, {
+    const readiness = await timedStep(storeId, store.engine, PHASES.POD_READINESS, cid, async () => {
+      // Since helm --wait already waited for readiness, this is a quick verification
+      // with a short timeout (30s). Only polls if the first check shows not-ready.
+      const quickCheck = await k8sService.checkPodsReady(store.namespace);
+      if (quickCheck.ready) {
+        return { ready: true, timedOut: false, durationMs: 0 };
+      }
+      // Fallback: brief poll in case of timing race
+      return k8sService.pollForReadiness(store.namespace, {
+        timeoutMs: 30000,
+        intervalMs: 3000,
         onProgress: (status) => {
-          logger.debug('Provisioning progress', {
+          logger.debug('Post-install readiness check', {
             storeId,
             correlationId: cid,
             podsReady: `${status.podsReadyCount}/${status.podsTotal}`,
-            jobsComplete: status.jobsComplete,
-            elapsedMs: status.elapsedMs,
           });
         },
-      })
-    );
+      });
+    });
 
     if (!readiness.ready) {
       const reason = readiness.timedOut

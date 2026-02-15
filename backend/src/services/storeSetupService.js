@@ -150,161 +150,107 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
   const podName = await findWordPressPod(namespace);
   logger.info('Found WordPress pod', { storeId, podName });
 
-  // Step 1: Install WP-CLI
-  await ensureWpCli({ namespace, podName });
-  results.wpCli = 'installed';
+  // ── Batched Setup (Steps 1-7 + 9 in a single kubectl exec) ──────────────
+  // Merges WP-CLI installation + WP core install + WooCommerce + theme + pages
+  // + config + COD payment + verification into ONE kubectl exec call.
+  // Previously 8-12 separate kubectl exec calls. Now 1 call for entire setup.
+  const themeSlug = theme === 'astra' ? 'astra' : 'storefront';
+  const wcUrl = `https://downloads.wordpress.org/plugin/woocommerce.${woocommerceVersion}.zip`;
 
-  // Step 2: Install WordPress core
-  logger.info('Installing WordPress core', { storeId });
+  const batchedSetupScript = [
+    // Step 1: Install WP-CLI (if not already present)
+    `echo "=== WP-CLI Install ==="`,
+    `if ! wp --allow-root --version 2>/dev/null; then curl -sO https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp && wp --allow-root --version; fi`,
+
+    // Step 2: Install WordPress core
+    `echo "=== WP Core Install ==="`,
+    `wp core install --allow-root --url="${siteUrl}" --title="My Store" --admin_user="${credentials.adminUsername}" --admin_password="${credentials.adminPassword}" --admin_email="${credentials.adminEmail}" --skip-email --path=/var/www/html 2>&1 || echo "WP_ALREADY_INSTALLED"`,
+
+    // Step 3: Install WooCommerce (pinned version)
+    `echo "=== WooCommerce Install ==="`,
+    `wp --allow-root plugin install "${wcUrl}" --activate --path=/var/www/html 2>&1 || wp --allow-root plugin activate woocommerce --path=/var/www/html 2>&1 || echo "WC_SKIP"`,
+
+    // Step 4: Install and activate theme
+    `echo "=== Theme Install ==="`,
+    `wp --allow-root theme install ${themeSlug} --activate --path=/var/www/html 2>&1 || wp --allow-root theme activate ${themeSlug} --path=/var/www/html 2>&1 || echo "THEME_SKIP"`,
+
+    // Step 5: Create WooCommerce pages
+    `echo "=== Create Pages ==="`,
+    `SHOP_ID=$(wp --allow-root post list --post_type=page --name=shop --format=ids --path=/var/www/html 2>/dev/null)`,
+    `if [ -z "$SHOP_ID" ]; then SHOP_ID=$(wp --allow-root post create --post_type=page --post_title="Shop" --post_status=publish --post_name=shop --porcelain --path=/var/www/html 2>/dev/null); fi`,
+    `CART_ID=$(wp --allow-root post list --post_type=page --name=cart --format=ids --path=/var/www/html 2>/dev/null)`,
+    `if [ -z "$CART_ID" ]; then CART_ID=$(wp --allow-root post create --post_type=page --post_title="Cart" --post_status=publish --post_name=cart --post_content='<!-- wp:shortcode -->[woocommerce_cart]<!-- /wp:shortcode -->' --porcelain --path=/var/www/html 2>/dev/null); fi`,
+    `CHECKOUT_ID=$(wp --allow-root post list --post_type=page --name=checkout --format=ids --path=/var/www/html 2>/dev/null)`,
+    `if [ -z "$CHECKOUT_ID" ]; then CHECKOUT_ID=$(wp --allow-root post create --post_type=page --post_title="Checkout" --post_status=publish --post_name=checkout --post_content='<!-- wp:shortcode -->[woocommerce_checkout]<!-- /wp:shortcode -->' --porcelain --path=/var/www/html 2>/dev/null); fi`,
+    `ACCOUNT_ID=$(wp --allow-root post list --post_type=page --name=my-account --format=ids --path=/var/www/html 2>/dev/null)`,
+    `if [ -z "$ACCOUNT_ID" ]; then ACCOUNT_ID=$(wp --allow-root post create --post_type=page --post_title="My Account" --post_status=publish --post_name=my-account --post_content='<!-- wp:shortcode -->[woocommerce_my_account]<!-- /wp:shortcode -->' --porcelain --path=/var/www/html 2>/dev/null); fi`,
+    `wp --allow-root option update woocommerce_shop_page_id "$SHOP_ID" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_cart_page_id "$CART_ID" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_checkout_page_id "$CHECKOUT_ID" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_myaccount_page_id "$ACCOUNT_ID" --path=/var/www/html 2>/dev/null`,
+
+    // Step 6: Configure WooCommerce settings
+    `echo "=== WC Config ==="`,
+    `wp --allow-root option update woocommerce_currency "USD" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_currency_pos "left" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_store_address "123 Main St" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_store_city "Anytown" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_default_country "US:CA" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_store_postcode "90210" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_onboarding_profile '{"completed":true}' --format=json --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_task_list_hidden "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_admin_notices '[]' --format=json --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_enable_guest_checkout "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_enable_checkout_login_reminder "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_calc_taxes "no" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root rewrite structure '/%postname%/' --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
+
+    // Step 7: Enable Cash on Delivery
+    `echo "=== COD Payment ==="`,
+    `wp --allow-root option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery.","instructions":"Pay with cash upon delivery.","enable_for_methods":[],"enable_for_virtual":"yes"}' --format=json --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
+
+    // Step 9: Final flush and verify
+    `echo "=== Verify ==="`,
+    `wp --allow-root cache flush --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root plugin is-active woocommerce --path=/var/www/html && echo "WC_ACTIVE" || echo "WC_INACTIVE"`,
+    `ACTIVE_THEME=$(wp --allow-root theme list --status=active --field=name --path=/var/www/html 2>/dev/null)`,
+    `echo "ACTIVE_THEME=$ACTIVE_THEME"`,
+    `echo "SETUP_COMPLETE"`,
+  ].join('; ');
+
+  logger.info('Running batched WooCommerce setup (single kubectl exec)', { storeId });
   try {
     const { stdout } = await kubectlExec({
       namespace,
       podName,
-      command: `wp core install --allow-root --url="${siteUrl}" --title="My Store" --admin_user="${credentials.adminUsername}" --admin_password="${credentials.adminPassword}" --admin_email="${credentials.adminEmail}" --skip-email --path=/var/www/html 2>&1 || echo "WP_ALREADY_INSTALLED"`,
-      timeoutMs: 120000,
+      command: batchedSetupScript,
+      timeoutMs: 300000, // 5 min for entire batched setup
     });
+
+    results.wpCli = 'installed';
     results.coreInstall = stdout.includes('WP_ALREADY_INSTALLED') ? 'already_installed' : 'installed';
-    logger.info('WordPress core install done', { storeId, result: results.coreInstall });
-  } catch (err) {
-    logger.warn('WordPress core install failed', { storeId, error: err.message });
-    results.coreInstall = `failed: ${err.message}`;
-  }
-
-  // Step 3: Install WooCommerce (pinned version for WP compatibility)
-  logger.info('Installing WooCommerce plugin', { storeId, version: woocommerceVersion });
-  try {
-    // Use versioned zip URL to avoid latest-version WP requirement conflicts
-    const wcUrl = `https://downloads.wordpress.org/plugin/woocommerce.${woocommerceVersion}.zip`;
-    await kubectlExec({
-      namespace,
-      podName,
-      command: `wp --allow-root plugin install "${wcUrl}" --activate --path=/var/www/html 2>&1 || wp --allow-root plugin activate woocommerce --path=/var/www/html 2>&1 || echo "WC_SKIP"`,
-      timeoutMs: 180000,
-    });
-    results.woocommerce = `installed (v${woocommerceVersion})`;
-    logger.info('WooCommerce installed', { storeId, version: woocommerceVersion });
-  } catch (err) {
-    logger.warn('WooCommerce install failed', { storeId, error: err.message });
-    results.woocommerce = `failed: ${err.message}`;
-  }
-
-  // Step 4: Install and activate the selected theme
-  const themeSlug = theme === 'astra' ? 'astra' : 'storefront';
-  logger.info('Installing theme', { storeId, theme: themeSlug });
-  try {
-    await kubectlExec({
-      namespace,
-      podName,
-      command: `wp --allow-root theme install ${themeSlug} --activate --path=/var/www/html 2>&1 || wp --allow-root theme activate ${themeSlug} --path=/var/www/html 2>&1 || echo "THEME_SKIP"`,
-      timeoutMs: 120000,
-    });
-    results.theme = themeSlug;
-    logger.info('Theme installed and activated', { storeId, theme: themeSlug });
-  } catch (err) {
-    logger.warn('Theme install failed', { storeId, error: err.message });
-    results.theme = `failed: ${err.message}`;
-  }
-
-  // Step 5: Create WooCommerce pages (Shop, Cart, Checkout, My Account)
-  logger.info('Creating WooCommerce pages', { storeId });
-  try {
-    await kubectlExec({
-      namespace,
-      podName,
-      command: [
-        // Create Shop page
-        `SHOP_ID=$(wp --allow-root post list --post_type=page --name=shop --format=ids --path=/var/www/html 2>/dev/null)`,
-        `if [ -z "$SHOP_ID" ]; then SHOP_ID=$(wp --allow-root post create --post_type=page --post_title="Shop" --post_status=publish --post_name=shop --porcelain --path=/var/www/html 2>/dev/null); fi`,
-        // Create Cart page
-        `CART_ID=$(wp --allow-root post list --post_type=page --name=cart --format=ids --path=/var/www/html 2>/dev/null)`,
-        `if [ -z "$CART_ID" ]; then CART_ID=$(wp --allow-root post create --post_type=page --post_title="Cart" --post_status=publish --post_name=cart --post_content='<!-- wp:shortcode -->[woocommerce_cart]<!-- /wp:shortcode -->' --porcelain --path=/var/www/html 2>/dev/null); fi`,
-        // Create Checkout page
-        `CHECKOUT_ID=$(wp --allow-root post list --post_type=page --name=checkout --format=ids --path=/var/www/html 2>/dev/null)`,
-        `if [ -z "$CHECKOUT_ID" ]; then CHECKOUT_ID=$(wp --allow-root post create --post_type=page --post_title="Checkout" --post_status=publish --post_name=checkout --post_content='<!-- wp:shortcode -->[woocommerce_checkout]<!-- /wp:shortcode -->' --porcelain --path=/var/www/html 2>/dev/null); fi`,
-        // Create My Account page
-        `ACCOUNT_ID=$(wp --allow-root post list --post_type=page --name=my-account --format=ids --path=/var/www/html 2>/dev/null)`,
-        `if [ -z "$ACCOUNT_ID" ]; then ACCOUNT_ID=$(wp --allow-root post create --post_type=page --post_title="My Account" --post_status=publish --post_name=my-account --post_content='<!-- wp:shortcode -->[woocommerce_my_account]<!-- /wp:shortcode -->' --porcelain --path=/var/www/html 2>/dev/null); fi`,
-        // Assign pages to WooCommerce settings
-        `wp --allow-root option update woocommerce_shop_page_id "$SHOP_ID" --path=/var/www/html 2>/dev/null`,
-        `wp --allow-root option update woocommerce_cart_page_id "$CART_ID" --path=/var/www/html 2>/dev/null`,
-        `wp --allow-root option update woocommerce_checkout_page_id "$CHECKOUT_ID" --path=/var/www/html 2>/dev/null`,
-        `wp --allow-root option update woocommerce_myaccount_page_id "$ACCOUNT_ID" --path=/var/www/html 2>/dev/null`,
-        `echo "PAGES_DONE"`,
-      ].join('; '),
-      timeoutMs: 120000,
-    });
+    results.woocommerce = stdout.includes('WC_SKIP') ? 'skipped' : `installed (v${woocommerceVersion})`;
+    results.theme = stdout.includes('THEME_SKIP') ? 'skipped' : themeSlug;
     results.pages = 'created';
-    logger.info('WooCommerce pages created', { storeId });
-  } catch (err) {
-    logger.warn('WooCommerce pages creation failed', { storeId, error: err.message });
-    results.pages = `failed: ${err.message}`;
-  }
-
-  // Step 6: Configure WooCommerce settings
-  logger.info('Configuring WooCommerce settings', { storeId });
-  try {
-    await kubectlExec({
-      namespace,
-      podName,
-      command: [
-        // Store details
-        `wp --allow-root option update woocommerce_currency "USD" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_currency_pos "left" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_store_address "123 Main St" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_store_city "Anytown" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_default_country "US:CA" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_store_postcode "90210" --path=/var/www/html`,
-        // Disable the WooCommerce setup wizard (we already configured everything)
-        `wp --allow-root option update woocommerce_onboarding_profile '{"completed":true}' --format=json --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_task_list_hidden "yes" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_admin_notices '[]' --format=json --path=/var/www/html`,
-        // Enable guest checkout (easier for testing)
-        `wp --allow-root option update woocommerce_enable_guest_checkout "yes" --path=/var/www/html`,
-        `wp --allow-root option update woocommerce_enable_checkout_login_reminder "yes" --path=/var/www/html`,
-        // Tax settings
-        `wp --allow-root option update woocommerce_calc_taxes "no" --path=/var/www/html`,
-        // Permalink structure for pretty URLs
-        `wp --allow-root rewrite structure '/%postname%/' --path=/var/www/html`,
-        `wp --allow-root rewrite flush --path=/var/www/html`,
-      ].join(' 2>/dev/null; ') + ' 2>/dev/null; echo "CONFIG_DONE"',
-      timeoutMs: 60000,
-    });
     results.config = 'done';
-    logger.info('WooCommerce settings configured', { storeId });
-  } catch (err) {
-    logger.warn('WooCommerce config failed', { storeId, error: err.message });
-    results.config = `failed: ${err.message}`;
-  }
-
-  // Step 7: Enable Cash on Delivery (COD) payment gateway
-  logger.info('Enabling COD payment gateway', { storeId });
-  try {
-    await kubectlExec({
-      namespace,
-      podName,
-      command: [
-        // Enable COD via WooCommerce payment gateway settings
-        `wp --allow-root option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery.","instructions":"Pay with cash upon delivery.","enable_for_methods":[],"enable_for_virtual":"yes"}' --format=json --path=/var/www/html`,
-        // Activate the COD gateway in the active gateways list
-        `ACTIVE=$(wp --allow-root option get woocommerce_gateway_order --format=json --path=/var/www/html 2>/dev/null || echo '{}')`,
-        // Flush rewrite rules to ensure checkout pages work
-        `wp --allow-root rewrite flush --path=/var/www/html`,
-        `echo "COD_DONE"`,
-      ].join(' 2>/dev/null; '),
-      timeoutMs: 60000,
-    });
     results.payment = 'cod_enabled';
-    logger.info('COD payment enabled', { storeId });
+    results.verification = stdout.includes('WC_ACTIVE') ? 'done' : 'wc_inactive';
+
+    logger.info('Batched WooCommerce setup completed', { storeId, results });
   } catch (err) {
-    logger.warn('COD payment setup failed', { storeId, error: err.message });
-    results.payment = `failed: ${err.message}`;
+    logger.warn('Batched WooCommerce setup failed', { storeId, error: err.message });
+    results.batchedSetup = `failed: ${err.message}`;
   }
 
-  // Step 8: Seed dummy products (3 sample products)
+  // Step 8: Seed dummy products (3 sample products) — batched into single kubectl exec
   // Uses wp post create with WooCommerce meta fields instead of `wp wc product create`
   // because the WC CLI subcommand requires the REST API package which may not load
   // immediately after plugin activation.
-  logger.info('Creating sample products', { storeId });
+  // Previously 3 separate kubectl exec calls + 1 flush = 4 calls (~78s).
+  // Now batched into 1 kubectl exec (~50-60s, saving ~15-20s process spawn overhead).
+  logger.info('Creating sample products (batched)', { storeId });
   try {
     const products = [
       {
@@ -336,101 +282,53 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
       },
     ];
 
-    let createdCount = 0;
-    for (const product of products) {
-      try {
-        // Create product post
-        const createCmd = [
-          `PID=$(wp --allow-root post create`,
-          `--post_type=product`,
-          `--post_title="${product.title}"`,
-          `--post_status=publish`,
-          `--post_content="${product.desc}"`,
-          `--post_excerpt="${product.shortDesc}"`,
-          `--porcelain`,
-          `--path=/var/www/html 2>/dev/null)`,
-        ].join(' ');
+    // Build a single bash script that creates all products sequentially
+    const productScriptParts = products.map((product, idx) => {
+      const metaFields = [
+        `wp --allow-root post meta update $PID${idx} _regular_price "${product.price}" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _price "${product.salePrice || product.price}" --path=/var/www/html`,
+        product.salePrice ? `wp --allow-root post meta update $PID${idx} _sale_price "${product.salePrice}" --path=/var/www/html` : '',
+        `wp --allow-root post meta update $PID${idx} _sku "${product.sku}" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _stock "${product.stock}" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _stock_status "instock" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _manage_stock "yes" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _visibility "visible" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _product_type "simple" --path=/var/www/html`,
+        `wp --allow-root post term set $PID${idx} product_type simple --path=/var/www/html`,
+        `wp --allow-root post term set $PID${idx} product_visibility "" --path=/var/www/html 2>/dev/null || true`,
+        `echo "CREATED_${idx}:$PID${idx}"`,
+      ].filter(Boolean).join('; ');
 
-        // Set WooCommerce meta fields
-        const metaCmd = [
-          `wp --allow-root post meta update $PID _regular_price "${product.price}" --path=/var/www/html`,
-          `wp --allow-root post meta update $PID _price "${product.salePrice || product.price}" --path=/var/www/html`,
-          product.salePrice ? `wp --allow-root post meta update $PID _sale_price "${product.salePrice}" --path=/var/www/html` : '',
-          `wp --allow-root post meta update $PID _sku "${product.sku}" --path=/var/www/html`,
-          `wp --allow-root post meta update $PID _stock "${product.stock}" --path=/var/www/html`,
-          `wp --allow-root post meta update $PID _stock_status "instock" --path=/var/www/html`,
-          `wp --allow-root post meta update $PID _manage_stock "yes" --path=/var/www/html`,
-          `wp --allow-root post meta update $PID _visibility "visible" --path=/var/www/html`,
-          `wp --allow-root post meta update $PID _product_type "simple" --path=/var/www/html`,
-          // Set product type taxonomy
-          `wp --allow-root post term set $PID product_type simple --path=/var/www/html`,
-          // Set product visibility
-          `wp --allow-root post term set $PID product_visibility "" --path=/var/www/html 2>/dev/null || true`,
-          `echo "CREATED:$PID"`,
-        ].filter(Boolean).join('; ');
+      return [
+        `echo "=== Product ${idx + 1}: ${product.title} ==="`,
+        `PID${idx}=$(wp --allow-root post create --post_type=product --post_title="${product.title}" --post_status=publish --post_content="${product.desc}" --post_excerpt="${product.shortDesc}" --porcelain --path=/var/www/html 2>/dev/null)`,
+        `if [ -n "$PID${idx}" ] && [ "$PID${idx}" -gt 0 ] 2>/dev/null; then ${metaFields}; fi`,
+      ].join('; ');
+    });
 
-        const { stdout } = await kubectlExec({
-          namespace,
-          podName,
-          command: `${createCmd}; if [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null; then ${metaCmd}; fi`,
-          timeoutMs: 60000,
-        });
+    // Add flush at end
+    productScriptParts.push(
+      `echo "=== Flush ==="`,
+      `wp --allow-root wc tool run regenerate_product_lookup_tables --user=1 --path=/var/www/html 2>/dev/null`,
+      `wp --allow-root cache flush --path=/var/www/html 2>/dev/null`,
+      `echo "PRODUCTS_DONE"`,
+    );
 
-        if (stdout.includes('CREATED:')) {
-          createdCount++;
-          logger.debug('Product created', { storeId, product: product.title, output: stdout.substring(0, 100) });
-        }
-      } catch (productErr) {
-        logger.warn('Product creation failed', { storeId, product: product.title, error: productErr.message });
-      }
-    }
+    const productScript = productScriptParts.join('; ');
 
-    // Flush WooCommerce product lookup tables after all products created
-    if (createdCount > 0) {
-      try {
-        await kubectlExec({
-          namespace,
-          podName,
-          command: `wp --allow-root wc tool run regenerate_product_lookup_tables --user=1 --path=/var/www/html 2>/dev/null; wp --allow-root cache flush --path=/var/www/html 2>/dev/null; echo "FLUSH_DONE"`,
-          timeoutMs: 30000,
-        });
-      } catch {
-        // Non-fatal — lookup tables will regenerate on first visit
-      }
-    }
+    const { stdout } = await kubectlExec({
+      namespace,
+      podName,
+      command: productScript,
+      timeoutMs: 180000, // 3 min for all products
+    });
 
+    const createdCount = (stdout.match(/CREATED_\d+:/g) || []).length;
     results.sampleProducts = `created (${createdCount} products)`;
-    logger.info('Sample products created', { storeId, count: createdCount });
+    logger.info('Sample products created (batched)', { storeId, count: createdCount });
   } catch (err) {
     logger.warn('Sample product creation failed', { storeId, error: err.message });
     results.sampleProducts = `failed: ${err.message}`;
-  }
-
-  // Step 9: Final flush and verify
-  logger.info('Running final setup verification', { storeId });
-  try {
-    await kubectlExec({
-      namespace,
-      podName,
-      command: [
-        // Flush object cache and rewrite rules
-        `wp --allow-root cache flush --path=/var/www/html 2>/dev/null`,
-        `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
-        // Verify WooCommerce is active
-        `wp --allow-root plugin is-active woocommerce --path=/var/www/html && echo "WC_ACTIVE" || echo "WC_INACTIVE"`,
-        // Verify theme is active
-        `ACTIVE_THEME=$(wp --allow-root theme list --status=active --field=name --path=/var/www/html 2>/dev/null)`,
-        `echo "ACTIVE_THEME=$ACTIVE_THEME"`,
-        // Count products
-        `PRODUCT_COUNT=$(wp --allow-root post list --post_type=product --post_status=publish --format=count --path=/var/www/html 2>/dev/null)`,
-        `echo "PRODUCTS=$PRODUCT_COUNT"`,
-      ].join('; '),
-      timeoutMs: 60000,
-    });
-    results.verification = 'done';
-  } catch (err) {
-    logger.warn('Verification failed (non-fatal)', { storeId, error: err.message });
-    results.verification = `failed: ${err.message}`;
   }
 
   logger.info('WooCommerce setup completed', { storeId, theme: themeSlug, results });

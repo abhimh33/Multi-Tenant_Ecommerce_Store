@@ -38,7 +38,7 @@ const envSchema = Joi.object({
   HELM_BIN: Joi.string().default('helm'),
   HELM_CHART_PATH: Joi.string().optional(),
   HELM_VALUES_FILE: Joi.string().default('values-local.yaml'),
-  HELM_TIMEOUT: Joi.string().default('10m'),
+  HELM_TIMEOUT: Joi.string().default('5m'),
   HELM_DEBUG: Joi.string().valid('true', 'false').default('false'),
 
   // ─── Provisioning ─────────────────────────────────────────────────────
