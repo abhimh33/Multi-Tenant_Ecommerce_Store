@@ -916,9 +916,9 @@ Stores are inherently isolated (1 namespace per store). The Kubernetes cluster i
         └────┬─────┘  └────┬─────┘  └────┬─────┘
              │              │              │
         ┌────▼──────────────▼──────────────▼────┐
-        │           Redis (shared state)         │
+        │           Redis (shared state)        │
         │  Rate limits, lockouts, cooldowns     │
-        └────────────────┬───────────────────────┘
+        └────────────────┬──────────────────────┘
                          │
         ┌────────────────▼───────────────────────┐
         │        PostgreSQL (primary)            │
@@ -1029,19 +1029,19 @@ The platform uses Helm 3's built-in revision tracking for safe upgrades and inst
 ```
                     ┌─────────────────────────────┐
                     │  1. Pre-flight              │
-                    │  helm lint + template render │
+                    │  helm lint + template render│
                     └──────────┬──────────────────┘
                                │
                     ┌──────────▼──────────────────┐
-                    │  2. Diff Preview (optional)  │
-                    │  helm diff upgrade           │
+                    │  2. Diff Preview (optional) │
+                    │  helm diff upgrade          │
                     └──────────┬──────────────────┘
                                │
                     ┌──────────▼──────────────────┐
-                    │  3. Upgrade                  │
-                    │  helm upgrade --install      │
-                    │  --atomic --cleanup-on-fail  │
-                    │  --wait --timeout 10m        │
+                    │  3. Upgrade                 │
+                    │  helm upgrade --install     │
+                    │  --atomic --cleanup-on-fail │
+                    │  --wait --timeout 10m       │
                     └──────────┬──────────────────┘
                                │
                     ┌──────────▼──────────────────┐
