@@ -172,7 +172,7 @@ Every store follows a strict state machine defined in `storeMachine.js`:
 
 ```
   requested ──▶ provisioning ──▶ ready ──▶ deleting ──▶ deleted
-                     │                        │
+                     │                         │
                      └──▶ failed ◀────────────┘
                             │
                             └──▶ requested  (retry)
@@ -473,10 +473,10 @@ The audit log is queryable via `GET /api/v1/audit/logs` (admin) and `GET /api/v1
 The platform is designed for single-instance operation, sufficient for tens to low hundreds of stores:
 
 ```
-┌──────────┐     ┌──────────┐     ┌──────────────────────┐
+┌──────────┐     ┌──────────┐      ┌──────────────────────┐
 │ Frontend │────▶│ Backend  │────▶│ Kubernetes Cluster   │
-│ (SPA)    │     │ (Express)│     │ (Docker Desktop/k3s) │
-└──────────┘     └────┬─────┘     └──────────────────────┘
+│ (SPA)    │     │ (Express)│      │ (Docker Desktop/k3s) │
+└──────────┘     └────┬─────┘      └──────────────────────┘
                       │
                  ┌────▼─────┐
                  │PostgreSQL│
