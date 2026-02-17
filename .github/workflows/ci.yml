@@ -213,9 +213,10 @@ jobs:
             cd ../frontend
             npm ci
             npm run build
-            pm2 restart mtec-frontend || pm2 serve dist 5173 --name mtec-frontend --spa
+            sudo cp -r dist/* /var/www/mtec/
             
             # Verify
             pm2 status
+            sudo systemctl reload nginx
             
             echo "✅ Deployment complete!"
