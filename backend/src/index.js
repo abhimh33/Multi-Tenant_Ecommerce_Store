@@ -45,6 +45,9 @@ envWarnings.forEach(w => logger.warn(w));
 
 const app = express();
 
+// ─── Trust Proxy (behind Nginx reverse proxy) ────────────────────────────────
+app.set('trust proxy', 1);
+
 // ─── Security ────────────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
