@@ -5,6 +5,8 @@ ingress:
   className: nginx
   hostSuffix: ".localhost"
   tls: false
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
 
 # Disable network policy on local cluster (Docker Desktop CNI may not support it)
 networkPolicy:
@@ -56,7 +58,7 @@ medusa:
   image:
     repository: medusa-backend
     tag: local
-    pullPolicy: Never
+    pullPolicy: IfNotPresent
   resources:
     requests:
       cpu: "50m"

@@ -304,6 +304,11 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
     let credentials;
     let setValues;
 
+    // Always pass domain suffix to Helm so ingress host matches the control plane URL
+    const commonSetValues = {
+      'ingress.hostSuffix': config.store.domainSuffix,
+    };
+
     if (store.engine === 'woocommerce') {
       const dbRootPassword = crypto.randomBytes(16).toString('base64url');
 
@@ -327,6 +332,7 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
         dbRootPassword,
       };
       setValues = {
+        ...commonSetValues,
         'wordpress.admin.password': adminPassword,
         'wordpress.admin.username': 'admin',
         'wordpress.admin.email': tenantEmail,
@@ -359,6 +365,7 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
         cookieSecret,
       };
       setValues = {
+        ...commonSetValues,
         'medusa.admin.email': tenantEmail,
         'medusa.admin.password': adminPassword,
         'medusa.jwtSecret': jwtSecret,
@@ -366,7 +373,6 @@ async function provisionStoreAsync(storeId, { tenantPassword, correlationId } = 
         'medusa.postgresql.password': dbPassword,
         // Deploy storefront SPA alongside Medusa backend
         'storefront.enabled': 'true',
-        'storefront.image.pullPolicy': 'Never',
         'storefront.storeName': store.name,
       };
     }

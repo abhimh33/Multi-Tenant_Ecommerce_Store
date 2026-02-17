@@ -163,7 +163,7 @@ storefront:
   image:
     repository: storefront-medusa
     tag: local
-    pullPolicy: Never
+    pullPolicy: IfNotPresent
   replicas: 1
   storeName: "My Store"
   resources:
