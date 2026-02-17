@@ -202,6 +202,12 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root option update woocommerce_admin_notices '[]' --format=json --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_enable_guest_checkout "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_enable_checkout_login_reminder "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_enable_signup_and_login_from_checkout "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_enable_myaccount_registration "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_registration_generate_username "yes" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_registration_generate_password "no" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update users_can_register 1 --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update default_role "customer" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_calc_taxes "no" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root rewrite structure '/%postname%/' --path=/var/www/html 2>/dev/null`,
     `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
@@ -294,8 +300,12 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
         `wp --allow-root post meta update $PID${idx} _manage_stock "yes" --path=/var/www/html`,
         `wp --allow-root post meta update $PID${idx} _visibility "visible" --path=/var/www/html`,
         `wp --allow-root post meta update $PID${idx} _product_type "simple" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _virtual "no" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _downloadable "no" --path=/var/www/html`,
+        `wp --allow-root post meta update $PID${idx} _catalog_visibility "visible" --path=/var/www/html`,
         `wp --allow-root post term set $PID${idx} product_type simple --path=/var/www/html`,
-        `wp --allow-root post term set $PID${idx} product_visibility "" --path=/var/www/html 2>/dev/null || true`,
+        `wp --allow-root post term remove $PID${idx} product_visibility exclude-from-catalog --path=/var/www/html 2>/dev/null || true`,
+        `wp --allow-root post term remove $PID${idx} product_visibility exclude-from-search --path=/var/www/html 2>/dev/null || true`,
         `echo "CREATED_${idx}:$PID${idx}"`,
       ].filter(Boolean).join('; ');
 
@@ -309,8 +319,11 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     // Add flush at end
     productScriptParts.push(
       `echo "=== Flush ==="`,
-      `wp --allow-root wc tool run regenerate_product_lookup_tables --user=1 --path=/var/www/html 2>/dev/null`,
+      `wp --allow-root wc tool run regenerate_product_lookup_tables --user=1 --path=/var/www/html 2>/dev/null || true`,
+      `wp --allow-root wc update --path=/var/www/html 2>/dev/null || true`,
+      `wp --allow-root transient delete --all --path=/var/www/html 2>/dev/null || true`,
       `wp --allow-root cache flush --path=/var/www/html 2>/dev/null`,
+      `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
       `echo "PRODUCTS_DONE"`,
     );
 
