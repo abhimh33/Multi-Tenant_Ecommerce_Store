@@ -200,9 +200,17 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root option update woocommerce_onboarding_profile '{"completed":true}' --format=json --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_task_list_hidden "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_admin_notices '[]' --format=json --path=/var/www/html 2>/dev/null`,
+    // Ensure site is publicly visible (not "coming soon" or "discourage search engines")
+    `wp --allow-root option update blog_public 1 --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update woocommerce_coming_soon "no" --path=/var/www/html 2>/dev/null`,
+    // Guest browsing + cart: no login required to browse or add to cart
+    // Guest checkout: can place orders without account
     `wp --allow-root option update woocommerce_enable_guest_checkout "yes" --path=/var/www/html 2>/dev/null`,
+    // Show login/register reminder on checkout page
     `wp --allow-root option update woocommerce_enable_checkout_login_reminder "yes" --path=/var/www/html 2>/dev/null`,
+    // Allow registration from checkout page
     `wp --allow-root option update woocommerce_enable_signup_and_login_from_checkout "yes" --path=/var/www/html 2>/dev/null`,
+    // Enable registration on My Account page
     `wp --allow-root option update woocommerce_enable_myaccount_registration "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_registration_generate_username "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_registration_generate_password "no" --path=/var/www/html 2>/dev/null`,
@@ -250,84 +258,39 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     results.batchedSetup = `failed: ${err.message}`;
   }
 
-  // Step 8: Seed dummy products (3 sample products) — batched into single kubectl exec
-  // Uses wp post create with WooCommerce meta fields instead of `wp wc product create`
-  // because the WC CLI subcommand requires the REST API package which may not load
-  // immediately after plugin activation.
-  // Previously 3 separate kubectl exec calls + 1 flush = 4 calls (~78s).
-  // Now batched into 1 kubectl exec (~50-60s, saving ~15-20s process spawn overhead).
-  logger.info('Creating sample products (batched)', { storeId });
+  // Step 8: Seed dummy products using `wp wc product create` (proper WooCommerce CLI)
+  // This ensures products are fully registered in WooCommerce's internal lookup tables
+  // and visible on the Shop page without any manual cache/table regeneration.
+  // Uses --user=1 for internal WP-CLI authentication (no REST API key needed).
+  logger.info('Creating sample products via WC CLI (batched)', { storeId });
   try {
-    const products = [
-      {
-        title: 'Classic T-Shirt',
-        price: '24.99',
-        salePrice: '',
-        sku: 'TSHIRT-001',
-        stock: '50',
-        desc: 'A comfortable cotton t-shirt available in multiple sizes. Perfect for everyday wear.',
-        shortDesc: 'Comfortable cotton t-shirt',
-      },
-      {
-        title: 'Wireless Headphones',
-        price: '79.99',
-        salePrice: '59.99',
-        sku: 'HEADPHONES-001',
-        stock: '30',
-        desc: 'Premium wireless headphones with noise cancellation and 24-hour battery life.',
-        shortDesc: 'Premium wireless headphones',
-      },
-      {
-        title: 'Leather Wallet',
-        price: '39.99',
-        salePrice: '',
-        sku: 'WALLET-001',
-        stock: '100',
-        desc: 'Handcrafted genuine leather wallet with multiple card slots and RFID protection.',
-        shortDesc: 'Genuine leather wallet',
-      },
-    ];
+    const productScript = [
+      `echo "=== Creating Products via WC CLI ==="`,
 
-    // Build a single bash script that creates all products sequentially
-    const productScriptParts = products.map((product, idx) => {
-      const metaFields = [
-        `wp --allow-root post meta update $PID${idx} _regular_price "${product.price}" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _price "${product.salePrice || product.price}" --path=/var/www/html`,
-        product.salePrice ? `wp --allow-root post meta update $PID${idx} _sale_price "${product.salePrice}" --path=/var/www/html` : '',
-        `wp --allow-root post meta update $PID${idx} _sku "${product.sku}" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _stock "${product.stock}" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _stock_status "instock" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _manage_stock "yes" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _visibility "visible" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _product_type "simple" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _virtual "no" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _downloadable "no" --path=/var/www/html`,
-        `wp --allow-root post meta update $PID${idx} _catalog_visibility "visible" --path=/var/www/html`,
-        `wp --allow-root post term set $PID${idx} product_type simple --path=/var/www/html`,
-        `wp --allow-root post term remove $PID${idx} product_visibility exclude-from-catalog --path=/var/www/html 2>/dev/null || true`,
-        `wp --allow-root post term remove $PID${idx} product_visibility exclude-from-search --path=/var/www/html 2>/dev/null || true`,
-        `echo "CREATED_${idx}:$PID${idx}"`,
-      ].filter(Boolean).join('; ');
+      // Product 1: Classic T-Shirt
+      `wp --allow-root wc product create --user=1 --name="Classic T-Shirt" --type=simple --regular_price="24.99" --description="A comfortable cotton t-shirt available in multiple sizes. Perfect for everyday wear." --short_description="Comfortable cotton t-shirt" --sku="TSHIRT-001" --stock_quantity=50 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_0" || echo "FAILED_0"`,
 
-      return [
-        `echo "=== Product ${idx + 1}: ${product.title} ==="`,
-        `PID${idx}=$(wp --allow-root post create --post_type=product --post_title="${product.title}" --post_status=publish --post_content="${product.desc}" --post_excerpt="${product.shortDesc}" --porcelain --path=/var/www/html 2>/dev/null)`,
-        `if [ -n "$PID${idx}" ] && [ "$PID${idx}" -gt 0 ] 2>/dev/null; then ${metaFields}; fi`,
-      ].join('; ');
-    });
+      // Product 2: Wireless Headphones (on sale)
+      `wp --allow-root wc product create --user=1 --name="Wireless Headphones" --type=simple --regular_price="79.99" --sale_price="59.99" --description="Premium wireless headphones with noise cancellation and 24-hour battery life." --short_description="Premium wireless headphones" --sku="HEADPHONES-001" --stock_quantity=30 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_1" || echo "FAILED_1"`,
 
-    // Add flush at end
-    productScriptParts.push(
+      // Product 3: Leather Wallet
+      `wp --allow-root wc product create --user=1 --name="Leather Wallet" --type=simple --regular_price="39.99" --description="Handcrafted genuine leather wallet with multiple card slots and RFID protection." --short_description="Genuine leather wallet" --sku="WALLET-001" --stock_quantity=100 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_2" || echo "FAILED_2"`,
+
+      // Product 4: Running Shoes
+      `wp --allow-root wc product create --user=1 --name="Running Shoes" --type=simple --regular_price="89.99" --sale_price="69.99" --description="Lightweight running shoes with responsive cushioning and breathable mesh upper." --short_description="Lightweight running shoes" --sku="SHOES-001" --stock_quantity=40 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_3" || echo "FAILED_3"`,
+
+      // Product 5: Backpack
+      `wp --allow-root wc product create --user=1 --name="Travel Backpack" --type=simple --regular_price="54.99" --description="Durable water-resistant backpack with laptop compartment and multiple pockets." --short_description="Durable travel backpack" --sku="BACKPACK-001" --stock_quantity=60 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_4" || echo "FAILED_4"`,
+
+      // Flush and rebuild
       `echo "=== Flush ==="`,
-      `wp --allow-root wc tool run regenerate_product_lookup_tables --user=1 --path=/var/www/html 2>/dev/null || true`,
-      `wp --allow-root wc update --path=/var/www/html 2>/dev/null || true`,
       `wp --allow-root transient delete --all --path=/var/www/html 2>/dev/null || true`,
-      `wp --allow-root cache flush --path=/var/www/html 2>/dev/null`,
-      `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
+      `wp --allow-root cache flush --path=/var/www/html 2>/dev/null || true`,
+      `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null || true`,
+      `PRODUCT_COUNT=$(wp --allow-root post list --post_type=product --post_status=publish --format=count --path=/var/www/html 2>/dev/null)`,
+      `echo "TOTAL_PRODUCTS:$PRODUCT_COUNT"`,
       `echo "PRODUCTS_DONE"`,
-    );
-
-    const productScript = productScriptParts.join('; ');
+    ].join('; ');
 
     const { stdout } = await kubectlExec({
       namespace,
@@ -336,9 +299,10 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
       timeoutMs: 180000, // 3 min for all products
     });
 
-    const createdCount = (stdout.match(/CREATED_\d+:/g) || []).length;
-    results.sampleProducts = `created (${createdCount} products)`;
-    logger.info('Sample products created (batched)', { storeId, count: createdCount });
+    const createdCount = (stdout.match(/CREATED_\d+/g) || []).length;
+    const totalMatch = stdout.match(/TOTAL_PRODUCTS:(\d+)/);
+    results.sampleProducts = `created (${createdCount} products, total: ${totalMatch ? totalMatch[1] : 'unknown'})`;
+    logger.info('Sample products created via WC CLI', { storeId, count: createdCount });
   } catch (err) {
     logger.warn('Sample product creation failed', { storeId, error: err.message });
     results.sampleProducts = `failed: ${err.message}`;
