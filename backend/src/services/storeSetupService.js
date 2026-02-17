@@ -300,15 +300,41 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery.","instructions":"Pay with cash upon delivery.","enable_for_methods":[],"enable_for_virtual":"yes"}' --format=json --path=/var/www/html 2>/dev/null`,
     `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
 
-    // Create a proper navigation menu: Shop + My Account only
-    // (WordPress auto-generates a fallback menu from all pages — Cart, Checkout, Sample Page, etc.)
+    // Create a proper navigation menu: Shop, Cart, My Account
+    // (WordPress auto-generates a fallback menu from all pages — Checkout, Sample Page, etc.)
     `echo "=== Navigation Menu ==="`,
     `MENU_EXISTS=$(wp --allow-root menu list --format=ids --path=/var/www/html 2>/dev/null)`,
     `if [ -z "$MENU_EXISTS" ]; then wp --allow-root menu create "Primary" --path=/var/www/html 2>/dev/null; fi`,
     `wp --allow-root menu item add-post "Primary" $SHOP_ID --title="Shop" --path=/var/www/html 2>/dev/null || true`,
+    `wp --allow-root menu item add-post "Primary" $CART_ID --title="Cart" --path=/var/www/html 2>/dev/null || true`,
     `wp --allow-root menu item add-post "Primary" $ACCOUNT_ID --title="My Account" --path=/var/www/html 2>/dev/null || true`,
     `wp --allow-root menu location assign "Primary" primary --path=/var/www/html 2>/dev/null || true`,
     `wp --allow-root menu location assign "Primary" handheld --path=/var/www/html 2>/dev/null || true`,
+
+    // Create mu-plugin to remove "New in store" products from empty cart page
+    // Storefront theme injects recent products below the empty cart message — bad UX
+    `echo "=== Clean Cart Page ==="`,
+    `mkdir -p /var/www/html/wp-content/mu-plugins`,
+    `cat > /var/www/html/wp-content/mu-plugins/clean-cart.php << 'MUEOF'
+<?php
+/**
+ * Plugin Name: Clean Cart Page
+ * Description: Remove product recommendations from empty cart page
+ */
+add_action('wp', function() {
+    if (function_exists('is_cart') && is_cart()) {
+        remove_action('storefront_homepage', 'storefront_recent_products', 50);
+        remove_action('storefront_homepage', 'storefront_popular_products', 50);
+        remove_action('storefront_homepage', 'storefront_on_sale_products', 50);
+        remove_action('storefront_homepage', 'storefront_promoted_products', 50);
+        remove_action('storefront_homepage', 'storefront_best_selling_products', 50);
+        remove_action('woocommerce_cart_collaterals', 'woocommerce_cross_sell_display');
+        add_action('wp_head', function() {
+            echo '<style>.woocommerce-cart .storefront-product-section, .woocommerce-cart .storefront-recent-products, .woocommerce-cart .cart-empty ~ .products, .woocommerce-cart .return-to-shop ~ *, .woocommerce-cart .woocommerce + .storefront-product-section { display:none!important; }</style>';
+        });
+    }
+});
+MUEOF`,
 
     // Verify
     `echo "=== Verify ==="`,
