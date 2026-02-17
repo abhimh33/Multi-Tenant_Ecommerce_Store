@@ -176,3 +176,43 @@ jobs:
 
       - name: Build medusa image
         run: docker build -t medusa-backend:ci -f docker/medusa/Dockerfile docker/medusa/
+
+  # ─── Deploy to AWS ────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, helm, docker]  # Only run after all tests pass
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            echo "🚀 Starting deployment..."
+            
+            cd /home/ubuntu/Multi-Tenant_Ecommerce_Store
+            git pull origin main
+            
+            # Backend
+            echo "📦 Deploying backend..."
+            cd backend
+            npm ci --production
+            npm run db:migrate
+            pm2 restart mtec-backend || pm2 start src/index.js --name mtec-backend
+            
+            # Frontend
+            echo "🎨 Deploying frontend..."
+            cd ../frontend
+            npm ci
+            npm run build
+            pm2 restart mtec-frontend || pm2 serve dist 5173 --name mtec-frontend --spa
+            
+            # Verify
+            pm2 status
+            
+            echo "✅ Deployment complete!"
