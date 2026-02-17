@@ -39,6 +39,7 @@ function SidebarContent({ onNavigate }) {
   const navigate = useNavigate();
   const [showPwForm, setShowPwForm] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showAdminStoreDialog, setShowAdminStoreDialog] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
   const [pwStatus, setPwStatus] = useState({ loading: false, error: null, success: false });
 
@@ -84,25 +85,47 @@ function SidebarContent({ onNavigate }) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {navItems.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              )
-            }
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </NavLink>
-        ))}
+        {navItems.map(({ to, label, icon: Icon, end }) => {
+          // Intercept "New Store" for admin users
+          if (to === '/stores/new' && isAdmin) {
+            return (
+              <button
+                key={to}
+                type="button"
+                onClick={() => {
+                  setShowAdminStoreDialog(true);
+                  if (onNavigate) onNavigate();
+                }}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+              </button>
+            );
+          }
+          return (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                )
+              }
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </NavLink>
+          );
+        })}
       </nav>
 
       <Separator />
@@ -173,6 +196,33 @@ function SidebarContent({ onNavigate }) {
           Sign out
         </Button>
       </div>
+
+      {/* Admin store-creation restriction dialog */}
+      <Dialog open={showAdminStoreDialog} onOpenChange={setShowAdminStoreDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 mb-2">
+              <Shield className="h-6 w-6 text-amber-600" />
+            </div>
+            <DialogTitle className="text-center">Store Creation Restricted</DialogTitle>
+            <DialogDescription className="text-center">
+              You are logged in as an <span className="font-semibold">administrator</span>. Your role is to
+              control and manage tenant stores, not to create stores as a tenant.
+              <br /><br />
+              If you want to create your own store, please register a separate
+              tenant account and sign in with it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex gap-2 sm:justify-center">
+            <Button
+              variant="outline"
+              onClick={() => setShowAdminStoreDialog(false)}
+            >
+              Understood
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Sign-out confirmation dialog */}
       <Dialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

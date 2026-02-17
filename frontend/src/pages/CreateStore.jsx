@@ -2,16 +2,18 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { storesApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
-import { Rocket, ArrowLeft } from 'lucide-react';
+import { Rocket, ArrowLeft, Shield } from 'lucide-react';
 
 export default function CreateStore() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const [form, setForm] = useState({
     name: '',
     engine: 'woocommerce',
@@ -46,6 +48,43 @@ export default function CreateStore() {
     e.preventDefault();
     createMutation.mutate(form);
   };
+
+  // Block admin users from creating stores
+  if (isAdmin) {
+    return (
+      <div className="max-w-xl mx-auto space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/stores')}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">New Store</h1>
+            <p className="text-muted-foreground">Store creation is restricted for admin accounts</p>
+          </div>
+        </div>
+        <Card>
+          <CardHeader className="text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 mb-3">
+              <Shield className="h-6 w-6 text-amber-600" />
+            </div>
+            <CardTitle>Store Creation Restricted</CardTitle>
+            <CardDescription className="text-sm leading-relaxed">
+              You are logged in as an <span className="font-semibold">administrator</span>. Your role is to
+              control and manage tenant stores, not to create stores as a tenant.
+              <br /><br />
+              If you want to create your own store, please register a separate
+              tenant account and sign in with it.
+            </CardDescription>
+          </CardHeader>
+          <CardFooter className="justify-center">
+            <Button variant="outline" onClick={() => navigate('/stores')}>
+              Back to Stores
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-xl mx-auto space-y-6">

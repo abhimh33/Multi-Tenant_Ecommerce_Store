@@ -45,9 +45,16 @@ export async function listProducts(params = {}) {
   return { products, count, limit, offset };
 }
 
-export async function getProduct(id) {
-  const { product } = await request(`/store/products/${id}`);
-  return product;
+export async function getProduct(idOrHandle) {
+  // If it looks like a Medusa product ID (starts with prod_), fetch by ID directly.
+  // Otherwise, treat it as a handle and search by handle.
+  if (idOrHandle.startsWith('prod_')) {
+    const { product } = await request(`/store/products/${idOrHandle}`);
+    return product;
+  }
+  // Fetch by handle — Medusa v1 Store API returns a list
+  const { products } = await request(`/store/products?handle=${encodeURIComponent(idOrHandle)}`);
+  return products?.[0] || null;
 }
 
 /* ── Collections ────────────────────────────── */
