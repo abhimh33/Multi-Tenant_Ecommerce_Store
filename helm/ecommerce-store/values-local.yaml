@@ -28,7 +28,7 @@ limitRange:
 # Smaller DB for local
 mariadb:
   persistence:
-    storageClass: "hostpath"
+    storageClass: "local-path"
     size: "1Gi"
   resources:
     requests:
@@ -41,7 +41,7 @@ mariadb:
 # Smaller WP for local
 wordpress:
   persistence:
-    storageClass: "hostpath"
+    storageClass: "local-path"
     size: "1Gi"
   resources:
     requests:
@@ -66,7 +66,7 @@ medusa:
       memory: "384Mi"
   postgresql:
     persistence:
-      storageClass: "hostpath"
+      storageClass: "local-path"
       size: "1Gi"
     resources:
       requests:
