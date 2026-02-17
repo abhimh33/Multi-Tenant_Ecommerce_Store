@@ -262,6 +262,14 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root option update woocommerce_checkout_page_id "$CHECKOUT_ID" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_myaccount_page_id "$ACCOUNT_ID" --path=/var/www/html 2>/dev/null`,
 
+    // Set front page to Shop so customers see products when they land on the store
+    `wp --allow-root option update show_on_front "page" --path=/var/www/html 2>/dev/null`,
+    `wp --allow-root option update page_on_front "$SHOP_ID" --path=/var/www/html 2>/dev/null`,
+
+    // Remove the "Sample Page" and "Hello world!" default content
+    `wp --allow-root post delete $(wp --allow-root post list --post_type=page --name=sample-page --format=ids --path=/var/www/html 2>/dev/null) --force --path=/var/www/html 2>/dev/null || true`,
+    `wp --allow-root post delete $(wp --allow-root post list --post_type=post --name=hello-world --format=ids --path=/var/www/html 2>/dev/null) --force --path=/var/www/html 2>/dev/null || true`,
+
     // Configure WooCommerce settings
     `echo "=== WC Config ==="`,
     `wp --allow-root option update woocommerce_currency "USD" --path=/var/www/html 2>/dev/null`,
@@ -291,6 +299,16 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `echo "=== COD Payment ==="`,
     `wp --allow-root option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery.","instructions":"Pay with cash upon delivery.","enable_for_methods":[],"enable_for_virtual":"yes"}' --format=json --path=/var/www/html 2>/dev/null`,
     `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
+
+    // Create a proper navigation menu: Shop + My Account only
+    // (WordPress auto-generates a fallback menu from all pages — Cart, Checkout, Sample Page, etc.)
+    `echo "=== Navigation Menu ==="`,
+    `MENU_EXISTS=$(wp --allow-root menu list --format=ids --path=/var/www/html 2>/dev/null)`,
+    `if [ -z "$MENU_EXISTS" ]; then wp --allow-root menu create "Primary" --path=/var/www/html 2>/dev/null; fi`,
+    `wp --allow-root menu item add-post "Primary" $SHOP_ID --title="Shop" --path=/var/www/html 2>/dev/null || true`,
+    `wp --allow-root menu item add-post "Primary" $ACCOUNT_ID --title="My Account" --path=/var/www/html 2>/dev/null || true`,
+    `wp --allow-root menu location assign "Primary" primary --path=/var/www/html 2>/dev/null || true`,
+    `wp --allow-root menu location assign "Primary" handheld --path=/var/www/html 2>/dev/null || true`,
 
     // Verify
     `echo "=== Verify ==="`,
