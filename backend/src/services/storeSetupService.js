@@ -266,128 +266,8 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
   // WooCommerce's REST API / CLI aren't fully initialized right after plugin activation.
   logger.info('Creating sample products via PHP script (wp eval-file)', { storeId });
   try {
-    // Write a PHP script into the container that creates products properly
-    const phpScript = `<?php
-// Ensure WooCommerce is loaded
-if ( ! class_exists( 'WC_Product_Simple' ) ) {
-    echo "ERROR: WooCommerce not loaded\\n";
-    exit(1);
-}
-
-\$products = array(
-    array(
-        'name'        => 'Classic T-Shirt',
-        'price'       => '24.99',
-        'sale'        => '',
-        'sku'         => 'TSHIRT-001',
-        'stock'       => 50,
-        'desc'        => 'A comfortable cotton t-shirt available in multiple sizes. Perfect for everyday wear.',
-        'short'       => 'Comfortable cotton t-shirt',
-        'img'         => 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&q=80',
-    ),
-    array(
-        'name'        => 'Wireless Headphones',
-        'price'       => '79.99',
-        'sale'        => '59.99',
-        'sku'         => 'HEADPHONES-001',
-        'stock'       => 30,
-        'desc'        => 'Premium wireless headphones with noise cancellation and 24-hour battery life.',
-        'short'       => 'Premium wireless headphones',
-        'img'         => 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&q=80',
-    ),
-    array(
-        'name'        => 'Leather Wallet',
-        'price'       => '39.99',
-        'sale'        => '',
-        'sku'         => 'WALLET-001',
-        'stock'       => 100,
-        'desc'        => 'Handcrafted genuine leather wallet with multiple card slots and RFID protection.',
-        'short'       => 'Genuine leather wallet',
-        'img'         => 'https://images.unsplash.com/photo-1627123424574-724758594e93?w=600&q=80',
-    ),
-    array(
-        'name'        => 'Running Shoes',
-        'price'       => '89.99',
-        'sale'        => '69.99',
-        'sku'         => 'SHOES-001',
-        'stock'       => 40,
-        'desc'        => 'Lightweight running shoes with responsive cushioning and breathable mesh upper.',
-        'short'       => 'Lightweight running shoes',
-        'img'         => 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&q=80',
-    ),
-    array(
-        'name'        => 'Travel Backpack',
-        'price'       => '54.99',
-        'sale'        => '',
-        'sku'         => 'BACKPACK-001',
-        'stock'       => 60,
-        'desc'        => 'Durable water-resistant backpack with laptop compartment and multiple pockets.',
-        'short'       => 'Durable travel backpack',
-        'img'         => 'https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=600&q=80',
-    ),
-    array(
-        'name'        => 'Stainless Steel Watch',
-        'price'       => '149.99',
-        'sale'        => '119.99',
-        'sku'         => 'WATCH-001',
-        'stock'       => 25,
-        'desc'        => 'Minimalist stainless steel analog watch with Japanese quartz movement and sapphire crystal.',
-        'short'       => 'Stainless steel analog watch',
-        'img'         => 'https://images.unsplash.com/photo-1524592094714-0f0654e20314?w=600&q=80',
-    ),
-);
-
-\$created = 0;
-foreach ( \$products as \$p ) {
-    // Skip if product with this SKU already exists
-    \$existing = wc_get_product_id_by_sku( \$p['sku'] );
-    if ( \$existing ) {
-        echo "SKIP:" . \$p['name'] . " (exists ID " . \$existing . ")\\n";
-        continue;
-    }
-
-    \$product = new WC_Product_Simple();
-    \$product->set_name( \$p['name'] );
-    \$product->set_status( 'publish' );
-    \$product->set_catalog_visibility( 'visible' );
-    \$product->set_description( \$p['desc'] );
-    \$product->set_short_description( \$p['short'] );
-    \$product->set_sku( \$p['sku'] );
-    \$product->set_regular_price( \$p['price'] );
-    if ( ! empty( \$p['sale'] ) ) {
-        \$product->set_sale_price( \$p['sale'] );
-    }
-    \$product->set_manage_stock( true );
-    \$product->set_stock_quantity( \$p['stock'] );
-    \$product->set_stock_status( 'instock' );
-    \$product->set_virtual( false );
-    \$product->set_downloadable( false );
-
-    \$id = \$product->save();
-    if ( \$id ) {
-        \$created++;
-        echo "CREATED:" . \$p['name'] . " (ID " . \$id . ")\\n";
-    } else {
-        echo "FAILED:" . \$p['name'] . "\\n";
-    }
-}
-
-// Clear all transients and caches so products appear immediately
-wc_delete_product_transients();
-if ( function_exists( 'wc_update_product_lookup_tables_column' ) ) {
-    // Force WooCommerce to rebuild lookup tables
-    global \$wpdb;
-    \$wpdb->query( "DELETE FROM {\$wpdb->prefix}wc_product_meta_lookup" );
-    \\WC_Post_Data::init();
-    wc_update_product_lookup_tables();
-}
-wp_cache_flush();
-
-\$total = wp_count_posts( 'product' );
-echo "TOTAL_PRODUCTS:" . ( isset( \$total->publish ) ? \$total->publish : 0 ) . "\\n";
-echo "PRODUCTS_CREATED:" . \$created . "\\n";
-echo "PRODUCTS_DONE\\n";
-`;
+    // Build PHP script as array of lines — avoids ESLint \$ escape issues in template literals
+    const phpScript = buildProductSeedPhpScript();
 
     // Write the PHP file into the container
     const writeCmd = `cat > /tmp/seed-products.php << 'PHPEOF'
@@ -420,6 +300,91 @@ PHPEOF`;
 
   logger.info('WooCommerce setup completed', { storeId, theme: themeSlug, results });
   return results;
+}
+
+/**
+ * Build a PHP script that creates WooCommerce products using WC_Product_Simple.
+ * Separated into its own function to avoid ESLint issues with PHP $ variables
+ * inside JS template literals.
+ * @returns {string} PHP script content
+ */
+function buildProductSeedPhpScript() {
+  const d = '$'; // PHP variable prefix — avoids ESLint no-useless-escape in template literals
+  const products = [
+    { name: 'Classic T-Shirt', price: '24.99', sale: '', sku: 'TSHIRT-001', stock: 50, desc: 'A comfortable cotton t-shirt available in multiple sizes. Perfect for everyday wear.', short: 'Comfortable cotton t-shirt' },
+    { name: 'Wireless Headphones', price: '79.99', sale: '59.99', sku: 'HEADPHONES-001', stock: 30, desc: 'Premium wireless headphones with noise cancellation and 24-hour battery life.', short: 'Premium wireless headphones' },
+    { name: 'Leather Wallet', price: '39.99', sale: '', sku: 'WALLET-001', stock: 100, desc: 'Handcrafted genuine leather wallet with multiple card slots and RFID protection.', short: 'Genuine leather wallet' },
+    { name: 'Running Shoes', price: '89.99', sale: '69.99', sku: 'SHOES-001', stock: 40, desc: 'Lightweight running shoes with responsive cushioning and breathable mesh upper.', short: 'Lightweight running shoes' },
+    { name: 'Travel Backpack', price: '54.99', sale: '', sku: 'BACKPACK-001', stock: 60, desc: 'Durable water-resistant backpack with laptop compartment and multiple pockets.', short: 'Durable travel backpack' },
+    { name: 'Stainless Steel Watch', price: '149.99', sale: '119.99', sku: 'WATCH-001', stock: 25, desc: 'Minimalist stainless steel analog watch with Japanese quartz movement.', short: 'Stainless steel analog watch' },
+  ];
+
+  // Build PHP array entries
+  const phpArrayEntries = products.map(p => [
+    '    array(',
+    `        'name'  => '${p.name}',`,
+    `        'price' => '${p.price}',`,
+    `        'sale'  => '${p.sale}',`,
+    `        'sku'   => '${p.sku}',`,
+    `        'stock' => ${p.stock},`,
+    `        'desc'  => '${p.desc}',`,
+    `        'short' => '${p.short}',`,
+    '    ),',
+  ].join('\n')).join('\n');
+
+  return [
+    '<?php',
+    'if ( ! class_exists( "WC_Product_Simple" ) ) {',
+    '    echo "ERROR: WooCommerce not loaded\\n";',
+    '    exit(1);',
+    '}',
+    '',
+    `${d}products = array(`,
+    phpArrayEntries,
+    ');',
+    '',
+    `${d}created = 0;`,
+    `foreach ( ${d}products as ${d}p ) {`,
+    `    ${d}existing = wc_get_product_id_by_sku( ${d}p['sku'] );`,
+    `    if ( ${d}existing ) {`,
+    `        echo "SKIP:" . ${d}p['name'] . " (exists ID " . ${d}existing . ")\\n";`,
+    '        continue;',
+    '    }',
+    '',
+    `    ${d}product = new WC_Product_Simple();`,
+    `    ${d}product->set_name( ${d}p['name'] );`,
+    `    ${d}product->set_status( 'publish' );`,
+    `    ${d}product->set_catalog_visibility( 'visible' );`,
+    `    ${d}product->set_description( ${d}p['desc'] );`,
+    `    ${d}product->set_short_description( ${d}p['short'] );`,
+    `    ${d}product->set_sku( ${d}p['sku'] );`,
+    `    ${d}product->set_regular_price( ${d}p['price'] );`,
+    `    if ( ! empty( ${d}p['sale'] ) ) {`,
+    `        ${d}product->set_sale_price( ${d}p['sale'] );`,
+    '    }',
+    `    ${d}product->set_manage_stock( true );`,
+    `    ${d}product->set_stock_quantity( ${d}p['stock'] );`,
+    `    ${d}product->set_stock_status( 'instock' );`,
+    `    ${d}product->set_virtual( false );`,
+    `    ${d}product->set_downloadable( false );`,
+    '',
+    `    ${d}id = ${d}product->save();`,
+    `    if ( ${d}id ) {`,
+    `        ${d}created++;`,
+    `        echo "CREATED:" . ${d}p['name'] . " (ID " . ${d}id . ")\\n";`,
+    '    } else {',
+    `        echo "FAILED:" . ${d}p['name'] . "\\n";`,
+    '    }',
+    '}',
+    '',
+    'wc_delete_product_transients();',
+    'wp_cache_flush();',
+    '',
+    `${d}total = wp_count_posts( 'product' );`,
+    `echo "TOTAL_PRODUCTS:" . ( isset( ${d}total->publish ) ? ${d}total->publish : 0 ) . "\\n";`,
+    `echo "PRODUCTS_CREATED:" . ${d}created . "\\n";`,
+    'echo "PRODUCTS_DONE\\n";',
+  ].join('\n');
 }
 
 /**
@@ -487,6 +452,7 @@ async function findMedusaPod(namespace) {
  * Execute a Medusa Admin API call from inside the pod using wget.
  * Returns the parsed JSON response.
  */
+// eslint-disable-next-line no-unused-vars
 async function medusaAdminApi({ namespace, podName, method, path, body, token, timeoutMs = 30000 }) {
   let cmd = `wget -qO- --method=${method} --header="Content-Type: application/json"`;
   if (token) cmd += ` --header="Authorization: Bearer ${token}"`;
