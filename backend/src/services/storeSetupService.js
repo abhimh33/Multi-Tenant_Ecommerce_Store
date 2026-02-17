@@ -81,6 +81,48 @@ async function findWordPressPod(namespace) {
 }
 
 /**
+ * Wait for the WordPress pod to be Running and Ready after potential OOM restarts.
+ * Polls every 5s for up to 90s.
+ * @param {string} namespace
+ * @param {string} storeId - for logging
+ * @returns {Promise<string>} Pod name (may differ after restart)
+ */
+async function waitForWordPressPod(namespace, storeId) {
+  const maxWaitMs = 90000;
+  const pollIntervalMs = 5000;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      // Get pod name + ready status
+      const { stdout } = await execFileAsync(KUBECTL_BIN, [
+        'get', 'pods', '-n', namespace,
+        '-l', 'app.kubernetes.io/name=wordpress',
+        '-o', 'jsonpath={.items[0].metadata.name} {.items[0].status.containerStatuses[0].ready}',
+      ], { timeout: 10000 });
+
+      const parts = stdout.trim().split(' ');
+      const podName = parts[0];
+      const isReady = parts[1] === 'true';
+
+      if (podName && podName !== '{}' && isReady) {
+        logger.debug('WordPress pod ready', { storeId, podName });
+        return podName;
+      }
+      logger.debug('Waiting for WordPress pod readiness', { storeId, podName, isReady });
+    } catch {
+      logger.debug('WordPress pod not found yet, retrying', { storeId });
+    }
+
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+
+  // Fallback: just find the pod even if not ready
+  logger.warn('WordPress pod readiness timed out, proceeding anyway', { storeId });
+  return findWordPressPod(namespace);
+}
+
+/**
  * Wait for WP-CLI to be available inside the WordPress container.
  * WordPress image doesn't include wp-cli, so we install it first.
  * @param {Object} params
@@ -147,34 +189,65 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
   logger.info('Starting WooCommerce setup', { storeId, namespace, siteUrl, theme });
 
   // Step 0: Find the WordPress pod
-  const podName = await findWordPressPod(namespace);
+  let podName = await findWordPressPod(namespace);
   logger.info('Found WordPress pod', { storeId, podName });
 
-  // ── Batched Setup (Steps 1-7 + 9 in a single kubectl exec) ──────────────
-  // Merges WP-CLI installation + WP core install + WooCommerce + theme + pages
-  // + config + COD payment + verification into ONE kubectl exec call.
-  // Previously 8-12 separate kubectl exec calls. Now 1 call for entire setup.
+  // ── Phase-based setup: split into lighter phases to avoid OOM (exit 137) ──
+  // WordPress container has limited memory; running WP-CLI + WooCommerce install
+  // + theme + config all in one exec can exceed the limit and kill the container.
+  // We split into 3 phases with pod readiness checks between them.
   const themeSlug = theme === 'astra' ? 'astra' : 'storefront';
   const wcUrl = `https://downloads.wordpress.org/plugin/woocommerce.${woocommerceVersion}.zip`;
 
-  const batchedSetupScript = [
-    // Step 1: Install WP-CLI (if not already present)
+  // ── Phase 1: WP-CLI + Core Install ──────────────────────────────────────
+  const phase1Script = [
     `echo "=== WP-CLI Install ==="`,
     `if ! wp --allow-root --version 2>/dev/null; then curl -sO https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp && wp --allow-root --version; fi`,
-
-    // Step 2: Install WordPress core
     `echo "=== WP Core Install ==="`,
     `wp core install --allow-root --url="${siteUrl}" --title="My Store" --admin_user="${credentials.adminUsername}" --admin_password="${credentials.adminPassword}" --admin_email="${credentials.adminEmail}" --skip-email --path=/var/www/html 2>&1 || echo "WP_ALREADY_INSTALLED"`,
+    `echo "PHASE1_DONE"`,
+  ].join('; ');
 
-    // Step 3: Install WooCommerce (pinned version)
+  logger.info('WooCommerce setup Phase 1: WP-CLI + Core Install', { storeId });
+  try {
+    const { stdout } = await kubectlExec({ namespace, podName, command: phase1Script, timeoutMs: 120000 });
+    results.wpCli = 'installed';
+    results.coreInstall = stdout.includes('WP_ALREADY_INSTALLED') ? 'already_installed' : 'installed';
+    logger.info('Phase 1 completed', { storeId });
+  } catch (err) {
+    logger.warn('Phase 1 failed', { storeId, error: err.message });
+    results.phase1 = `failed: ${err.message}`;
+  }
+
+  // Wait for pod readiness (container may have restarted)
+  podName = await waitForWordPressPod(namespace, storeId);
+
+  // ── Phase 2: WooCommerce + Theme Install ────────────────────────────────
+  const phase2Script = [
     `echo "=== WooCommerce Install ==="`,
     `wp --allow-root plugin install "${wcUrl}" --activate --path=/var/www/html 2>&1 || wp --allow-root plugin activate woocommerce --path=/var/www/html 2>&1 || echo "WC_SKIP"`,
-
-    // Step 4: Install and activate theme
     `echo "=== Theme Install ==="`,
     `wp --allow-root theme install ${themeSlug} --activate --path=/var/www/html 2>&1 || wp --allow-root theme activate ${themeSlug} --path=/var/www/html 2>&1 || echo "THEME_SKIP"`,
+    `echo "PHASE2_DONE"`,
+  ].join('; ');
 
-    // Step 5: Create WooCommerce pages
+  logger.info('WooCommerce setup Phase 2: WooCommerce + Theme', { storeId });
+  try {
+    const { stdout } = await kubectlExec({ namespace, podName, command: phase2Script, timeoutMs: 180000 });
+    results.woocommerce = stdout.includes('WC_SKIP') ? 'skipped' : `installed (v${woocommerceVersion})`;
+    results.theme = stdout.includes('THEME_SKIP') ? 'skipped' : themeSlug;
+    logger.info('Phase 2 completed', { storeId });
+  } catch (err) {
+    logger.warn('Phase 2 failed', { storeId, error: err.message });
+    results.phase2 = `failed: ${err.message}`;
+  }
+
+  // Wait for pod readiness again
+  podName = await waitForWordPressPod(namespace, storeId);
+
+  // ── Phase 3: Pages + Settings + COD + Verify ───────────────────────────
+  const phase3Script = [
+    // Create WooCommerce pages
     `echo "=== Create Pages ==="`,
     `SHOP_ID=$(wp --allow-root post list --post_type=page --name=shop --format=ids --path=/var/www/html 2>/dev/null)`,
     `if [ -z "$SHOP_ID" ]; then SHOP_ID=$(wp --allow-root post create --post_type=page --post_title="Shop" --post_status=publish --post_name=shop --porcelain --path=/var/www/html 2>/dev/null); fi`,
@@ -189,7 +262,7 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root option update woocommerce_checkout_page_id "$CHECKOUT_ID" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_myaccount_page_id "$ACCOUNT_ID" --path=/var/www/html 2>/dev/null`,
 
-    // Step 6: Configure WooCommerce settings
+    // Configure WooCommerce settings
     `echo "=== WC Config ==="`,
     `wp --allow-root option update woocommerce_currency "USD" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_currency_pos "left" --path=/var/www/html 2>/dev/null`,
@@ -200,17 +273,11 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root option update woocommerce_onboarding_profile '{"completed":true}' --format=json --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_task_list_hidden "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_admin_notices '[]' --format=json --path=/var/www/html 2>/dev/null`,
-    // Ensure site is publicly visible (not "coming soon" or "discourage search engines")
     `wp --allow-root option update blog_public 1 --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_coming_soon "no" --path=/var/www/html 2>/dev/null`,
-    // Guest browsing + cart: no login required to browse or add to cart
-    // Guest checkout: can place orders without account
     `wp --allow-root option update woocommerce_enable_guest_checkout "yes" --path=/var/www/html 2>/dev/null`,
-    // Show login/register reminder on checkout page
     `wp --allow-root option update woocommerce_enable_checkout_login_reminder "yes" --path=/var/www/html 2>/dev/null`,
-    // Allow registration from checkout page
     `wp --allow-root option update woocommerce_enable_signup_and_login_from_checkout "yes" --path=/var/www/html 2>/dev/null`,
-    // Enable registration on My Account page
     `wp --allow-root option update woocommerce_enable_myaccount_registration "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_registration_generate_username "yes" --path=/var/www/html 2>/dev/null`,
     `wp --allow-root option update woocommerce_registration_generate_password "no" --path=/var/www/html 2>/dev/null`,
@@ -220,12 +287,12 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `wp --allow-root rewrite structure '/%postname%/' --path=/var/www/html 2>/dev/null`,
     `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
 
-    // Step 7: Enable Cash on Delivery
+    // Enable Cash on Delivery
     `echo "=== COD Payment ==="`,
     `wp --allow-root option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery.","instructions":"Pay with cash upon delivery.","enable_for_methods":[],"enable_for_virtual":"yes"}' --format=json --path=/var/www/html 2>/dev/null`,
     `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null`,
 
-    // Step 9: Final flush and verify
+    // Verify
     `echo "=== Verify ==="`,
     `wp --allow-root cache flush --path=/var/www/html 2>/dev/null`,
     `wp --allow-root plugin is-active woocommerce --path=/var/www/html && echo "WC_ACTIVE" || echo "WC_INACTIVE"`,
@@ -234,29 +301,21 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     `echo "SETUP_COMPLETE"`,
   ].join('; ');
 
-  logger.info('Running batched WooCommerce setup (single kubectl exec)', { storeId });
+  logger.info('WooCommerce setup Phase 3: Pages + Config + Verify', { storeId });
   try {
-    const { stdout } = await kubectlExec({
-      namespace,
-      podName,
-      command: batchedSetupScript,
-      timeoutMs: 300000, // 5 min for entire batched setup
-    });
-
-    results.wpCli = 'installed';
-    results.coreInstall = stdout.includes('WP_ALREADY_INSTALLED') ? 'already_installed' : 'installed';
-    results.woocommerce = stdout.includes('WC_SKIP') ? 'skipped' : `installed (v${woocommerceVersion})`;
-    results.theme = stdout.includes('THEME_SKIP') ? 'skipped' : themeSlug;
+    const { stdout } = await kubectlExec({ namespace, podName, command: phase3Script, timeoutMs: 120000 });
     results.pages = 'created';
     results.config = 'done';
     results.payment = 'cod_enabled';
     results.verification = stdout.includes('WC_ACTIVE') ? 'done' : 'wc_inactive';
-
-    logger.info('Batched WooCommerce setup completed', { storeId, results });
+    logger.info('Phase 3 completed', { storeId });
   } catch (err) {
-    logger.warn('Batched WooCommerce setup failed', { storeId, error: err.message });
-    results.batchedSetup = `failed: ${err.message}`;
+    logger.warn('Phase 3 failed', { storeId, error: err.message });
+    results.phase3 = `failed: ${err.message}`;
   }
+
+  // Wait for pod readiness before product seeding
+  podName = await waitForWordPressPod(namespace, storeId);
 
   // Step 8: Seed dummy products using a PHP script executed via wp eval-file.
   // This uses WooCommerce's internal WC_Product_Simple class to create products,

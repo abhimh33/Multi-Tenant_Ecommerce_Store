@@ -48,10 +48,10 @@ wordpress:
   resources:
     requests:
       cpu: "50m"
-      memory: "128Mi"
+      memory: "192Mi"
     limits:
-      cpu: "300m"
-      memory: "384Mi"
+      cpu: "500m"
+      memory: "512Mi"
 
 # Smaller Medusa for local
 medusa:
