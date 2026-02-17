@@ -258,51 +258,161 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
     results.batchedSetup = `failed: ${err.message}`;
   }
 
-  // Step 8: Seed dummy products using `wp wc product create` (proper WooCommerce CLI)
-  // This ensures products are fully registered in WooCommerce's internal lookup tables
-  // and visible on the Shop page without any manual cache/table regeneration.
-  // Uses --user=1 for internal WP-CLI authentication (no REST API key needed).
-  logger.info('Creating sample products via WC CLI (batched)', { storeId });
+  // Step 8: Seed dummy products using a PHP script executed via wp eval-file.
+  // This uses WooCommerce's internal WC_Product_Simple class to create products,
+  // which is the most reliable method — it fully populates all lookup tables,
+  // sets proper taxonomy terms, and makes products immediately visible on the shop page.
+  // Previous approaches (wp post create, wp wc product create) failed because
+  // WooCommerce's REST API / CLI aren't fully initialized right after plugin activation.
+  logger.info('Creating sample products via PHP script (wp eval-file)', { storeId });
   try {
-    const productScript = [
-      `echo "=== Creating Products via WC CLI ==="`,
+    // Write a PHP script into the container that creates products properly
+    const phpScript = `<?php
+// Ensure WooCommerce is loaded
+if ( ! class_exists( 'WC_Product_Simple' ) ) {
+    echo "ERROR: WooCommerce not loaded\\n";
+    exit(1);
+}
 
-      // Product 1: Classic T-Shirt
-      `wp --allow-root wc product create --user=1 --name="Classic T-Shirt" --type=simple --regular_price="24.99" --description="A comfortable cotton t-shirt available in multiple sizes. Perfect for everyday wear." --short_description="Comfortable cotton t-shirt" --sku="TSHIRT-001" --stock_quantity=50 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_0" || echo "FAILED_0"`,
+\$products = array(
+    array(
+        'name'        => 'Classic T-Shirt',
+        'price'       => '24.99',
+        'sale'        => '',
+        'sku'         => 'TSHIRT-001',
+        'stock'       => 50,
+        'desc'        => 'A comfortable cotton t-shirt available in multiple sizes. Perfect for everyday wear.',
+        'short'       => 'Comfortable cotton t-shirt',
+        'img'         => 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&q=80',
+    ),
+    array(
+        'name'        => 'Wireless Headphones',
+        'price'       => '79.99',
+        'sale'        => '59.99',
+        'sku'         => 'HEADPHONES-001',
+        'stock'       => 30,
+        'desc'        => 'Premium wireless headphones with noise cancellation and 24-hour battery life.',
+        'short'       => 'Premium wireless headphones',
+        'img'         => 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&q=80',
+    ),
+    array(
+        'name'        => 'Leather Wallet',
+        'price'       => '39.99',
+        'sale'        => '',
+        'sku'         => 'WALLET-001',
+        'stock'       => 100,
+        'desc'        => 'Handcrafted genuine leather wallet with multiple card slots and RFID protection.',
+        'short'       => 'Genuine leather wallet',
+        'img'         => 'https://images.unsplash.com/photo-1627123424574-724758594e93?w=600&q=80',
+    ),
+    array(
+        'name'        => 'Running Shoes',
+        'price'       => '89.99',
+        'sale'        => '69.99',
+        'sku'         => 'SHOES-001',
+        'stock'       => 40,
+        'desc'        => 'Lightweight running shoes with responsive cushioning and breathable mesh upper.',
+        'short'       => 'Lightweight running shoes',
+        'img'         => 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&q=80',
+    ),
+    array(
+        'name'        => 'Travel Backpack',
+        'price'       => '54.99',
+        'sale'        => '',
+        'sku'         => 'BACKPACK-001',
+        'stock'       => 60,
+        'desc'        => 'Durable water-resistant backpack with laptop compartment and multiple pockets.',
+        'short'       => 'Durable travel backpack',
+        'img'         => 'https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=600&q=80',
+    ),
+    array(
+        'name'        => 'Stainless Steel Watch',
+        'price'       => '149.99',
+        'sale'        => '119.99',
+        'sku'         => 'WATCH-001',
+        'stock'       => 25,
+        'desc'        => 'Minimalist stainless steel analog watch with Japanese quartz movement and sapphire crystal.',
+        'short'       => 'Stainless steel analog watch',
+        'img'         => 'https://images.unsplash.com/photo-1524592094714-0f0654e20314?w=600&q=80',
+    ),
+);
 
-      // Product 2: Wireless Headphones (on sale)
-      `wp --allow-root wc product create --user=1 --name="Wireless Headphones" --type=simple --regular_price="79.99" --sale_price="59.99" --description="Premium wireless headphones with noise cancellation and 24-hour battery life." --short_description="Premium wireless headphones" --sku="HEADPHONES-001" --stock_quantity=30 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_1" || echo "FAILED_1"`,
+\$created = 0;
+foreach ( \$products as \$p ) {
+    // Skip if product with this SKU already exists
+    \$existing = wc_get_product_id_by_sku( \$p['sku'] );
+    if ( \$existing ) {
+        echo "SKIP:" . \$p['name'] . " (exists ID " . \$existing . ")\\n";
+        continue;
+    }
 
-      // Product 3: Leather Wallet
-      `wp --allow-root wc product create --user=1 --name="Leather Wallet" --type=simple --regular_price="39.99" --description="Handcrafted genuine leather wallet with multiple card slots and RFID protection." --short_description="Genuine leather wallet" --sku="WALLET-001" --stock_quantity=100 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_2" || echo "FAILED_2"`,
+    \$product = new WC_Product_Simple();
+    \$product->set_name( \$p['name'] );
+    \$product->set_status( 'publish' );
+    \$product->set_catalog_visibility( 'visible' );
+    \$product->set_description( \$p['desc'] );
+    \$product->set_short_description( \$p['short'] );
+    \$product->set_sku( \$p['sku'] );
+    \$product->set_regular_price( \$p['price'] );
+    if ( ! empty( \$p['sale'] ) ) {
+        \$product->set_sale_price( \$p['sale'] );
+    }
+    \$product->set_manage_stock( true );
+    \$product->set_stock_quantity( \$p['stock'] );
+    \$product->set_stock_status( 'instock' );
+    \$product->set_virtual( false );
+    \$product->set_downloadable( false );
 
-      // Product 4: Running Shoes
-      `wp --allow-root wc product create --user=1 --name="Running Shoes" --type=simple --regular_price="89.99" --sale_price="69.99" --description="Lightweight running shoes with responsive cushioning and breathable mesh upper." --short_description="Lightweight running shoes" --sku="SHOES-001" --stock_quantity=40 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_3" || echo "FAILED_3"`,
+    \$id = \$product->save();
+    if ( \$id ) {
+        \$created++;
+        echo "CREATED:" . \$p['name'] . " (ID " . \$id . ")\\n";
+    } else {
+        echo "FAILED:" . \$p['name'] . "\\n";
+    }
+}
 
-      // Product 5: Backpack
-      `wp --allow-root wc product create --user=1 --name="Travel Backpack" --type=simple --regular_price="54.99" --description="Durable water-resistant backpack with laptop compartment and multiple pockets." --short_description="Durable travel backpack" --sku="BACKPACK-001" --stock_quantity=60 --manage_stock=true --catalog_visibility=visible --status=publish --path=/var/www/html 2>&1 && echo "CREATED_4" || echo "FAILED_4"`,
+// Clear all transients and caches so products appear immediately
+wc_delete_product_transients();
+if ( function_exists( 'wc_update_product_lookup_tables_column' ) ) {
+    // Force WooCommerce to rebuild lookup tables
+    global \$wpdb;
+    \$wpdb->query( "DELETE FROM {\$wpdb->prefix}wc_product_meta_lookup" );
+    \\WC_Post_Data::init();
+    wc_update_product_lookup_tables();
+}
+wp_cache_flush();
 
-      // Flush and rebuild
-      `echo "=== Flush ==="`,
-      `wp --allow-root transient delete --all --path=/var/www/html 2>/dev/null || true`,
-      `wp --allow-root cache flush --path=/var/www/html 2>/dev/null || true`,
-      `wp --allow-root rewrite flush --path=/var/www/html 2>/dev/null || true`,
-      `PRODUCT_COUNT=$(wp --allow-root post list --post_type=product --post_status=publish --format=count --path=/var/www/html 2>/dev/null)`,
-      `echo "TOTAL_PRODUCTS:$PRODUCT_COUNT"`,
-      `echo "PRODUCTS_DONE"`,
-    ].join('; ');
+\$total = wp_count_posts( 'product' );
+echo "TOTAL_PRODUCTS:" . ( isset( \$total->publish ) ? \$total->publish : 0 ) . "\\n";
+echo "PRODUCTS_CREATED:" . \$created . "\\n";
+echo "PRODUCTS_DONE\\n";
+`;
 
+    // Write the PHP file into the container
+    const writeCmd = `cat > /tmp/seed-products.php << 'PHPEOF'
+${phpScript}
+PHPEOF`;
+
+    await kubectlExec({
+      namespace,
+      podName,
+      command: writeCmd,
+      timeoutMs: 15000,
+    });
+
+    // Execute the PHP script via wp eval-file (loads full WordPress + WooCommerce context)
     const { stdout } = await kubectlExec({
       namespace,
       podName,
-      command: productScript,
-      timeoutMs: 180000, // 3 min for all products
+      command: 'wp --allow-root eval-file /tmp/seed-products.php --path=/var/www/html 2>&1; rm -f /tmp/seed-products.php',
+      timeoutMs: 180000, // 3 min
     });
 
-    const createdCount = (stdout.match(/CREATED_\d+/g) || []).length;
+    const createdCount = (stdout.match(/CREATED:/g) || []).length;
     const totalMatch = stdout.match(/TOTAL_PRODUCTS:(\d+)/);
     results.sampleProducts = `created (${createdCount} products, total: ${totalMatch ? totalMatch[1] : 'unknown'})`;
-    logger.info('Sample products created via WC CLI', { storeId, count: createdCount });
+    logger.info('Sample products created via PHP', { storeId, count: createdCount, output: stdout.substring(0, 500) });
   } catch (err) {
     logger.warn('Sample product creation failed', { storeId, error: err.message });
     results.sampleProducts = `failed: ${err.message}`;
