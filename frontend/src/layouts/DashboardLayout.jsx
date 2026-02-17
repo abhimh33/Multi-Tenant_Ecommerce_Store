@@ -14,6 +14,8 @@ import {
   Shield,
   KeyRound,
   AlertTriangle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
@@ -42,6 +44,9 @@ function SidebarContent({ onNavigate }) {
   const [showAdminStoreDialog, setShowAdminStoreDialog] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
   const [pwStatus, setPwStatus] = useState({ loading: false, error: null, success: false });
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -155,35 +160,83 @@ function SidebarContent({ onNavigate }) {
         </Button>
         {showPwForm && (
           <form onSubmit={handlePwChange} className="space-y-2 rounded-md border p-3">
-            <input
-              type="password"
-              placeholder="Current password"
-              value={pwForm.currentPassword}
-              onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })}
-              className="w-full rounded border px-2 py-1 text-sm"
-              required
-            />
-            <input
-              type="password"
-              placeholder="New password"
-              value={pwForm.newPassword}
-              onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })}
-              className="w-full rounded border px-2 py-1 text-sm"
-              required
-            />
-            <input
-              type="password"
-              placeholder="Confirm new password"
-              value={pwForm.confirm}
-              onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
-              className="w-full rounded border px-2 py-1 text-sm"
-              required
-            />
+            <div className="relative">
+              <input
+                type={showCurrentPw ? 'text' : 'password'}
+                placeholder="Current password"
+                value={pwForm.currentPassword}
+                onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })}
+                className="w-full rounded border px-2 py-1 pr-8 text-sm"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowCurrentPw(!showCurrentPw)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                tabIndex={-1}
+              >
+                {showCurrentPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <div className="relative">
+              <input
+                type={showNewPw ? 'text' : 'password'}
+                placeholder="New password"
+                value={pwForm.newPassword}
+                onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })}
+                className="w-full rounded border px-2 py-1 pr-8 text-sm"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPw(!showNewPw)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                tabIndex={-1}
+              >
+                {showNewPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <div className="relative">
+              <input
+                type={showConfirmPw ? 'text' : 'password'}
+                placeholder="Confirm new password"
+                value={pwForm.confirm}
+                onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
+                className="w-full rounded border px-2 py-1 pr-8 text-sm"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPw(!showConfirmPw)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                tabIndex={-1}
+              >
+                {showConfirmPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
             {pwStatus.error && <p className="text-xs text-red-500">{pwStatus.error}</p>}
             {pwStatus.success && <p className="text-xs text-emerald-500">Password changed!</p>}
-            <Button type="submit" size="sm" className="w-full" disabled={pwStatus.loading}>
-              {pwStatus.loading ? 'Saving…' : 'Save'}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => {
+                  setShowPwForm(false);
+                  setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
+                  setPwStatus({ loading: false, error: null, success: false });
+                  setShowCurrentPw(false);
+                  setShowNewPw(false);
+                  setShowConfirmPw(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" className="flex-1" disabled={pwStatus.loading}>
+                {pwStatus.loading ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
           </form>
         )}
         <Button

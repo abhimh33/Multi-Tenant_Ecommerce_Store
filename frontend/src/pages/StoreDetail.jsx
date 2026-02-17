@@ -223,7 +223,9 @@ export default function StoreDetail() {
           </CardHeader>
           <CardContent className="space-y-3">
             <InfoRow label="Storefront">
-              {store.urls?.storefront ? (
+              {store.status === 'deleted' || store.status === 'deleting' ? (
+                <span className="text-muted-foreground text-sm">Store removed</span>
+              ) : store.urls?.storefront ? (
                 <a
                   href={store.urls.storefront}
                   target="_blank"
@@ -238,7 +240,9 @@ export default function StoreDetail() {
               )}
             </InfoRow>
             <InfoRow label="Admin">
-              {store.urls?.admin ? (
+              {store.status === 'deleted' || store.status === 'deleting' ? (
+                <span className="text-muted-foreground text-sm">Store removed</span>
+              ) : store.urls?.admin ? (
                 <a
                   href={store.urls.admin}
                   target="_blank"
