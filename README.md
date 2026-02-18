@@ -2,6 +2,24 @@
 
 A Kubernetes-native platform for provisioning and managing isolated e-commerce stores on demand. Supports **WooCommerce** (WordPress + MariaDB) and **MedusaJS** (Node.js + PostgreSQL) engines.
 
+---
+
+## Live Demo
+
+| Service | URL |
+|---------|-----|
+| **Dashboard (Frontend)** | [http://65.0.165.214](http://65.0.165.214) |
+| **Backend API** | [http://65.0.165.214/api/v1/health](http://65.0.165.214/api/v1/health) |
+| **Provisioned Stores** | `http://store-<id>.65.0.165.214.nip.io` (auto-generated per store) |
+
+> **Note:** The live demo is hosted on AWS EC2. If the URL is inactive or unreachable, the instance may have been stopped to manage hosting costs. To request reactivation, please reach out to the repository owner via [email](mailto:abhimh33@gmail.com) or open a [GitHub Issue](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/issues). The instance will be brought back online promptly.
+
+**Demo Credentials (Admin):**
+- Email: `admin@example.com`
+- Password: `admin123!`
+
+---
+
 ## Features
 
 - **Multi-engine support**: WooCommerce and MedusaJS
@@ -1373,24 +1391,184 @@ storefront:
 
 This creates a `Deployment` + `Service` for the storefront pod within the same store namespace. The ingress routing (`/` → storefront, `/store/*` → Medusa API) is a planned enhancement.
 
+## Production Deployment (AWS EC2)
+
+The platform is deployed on an **AWS EC2 m7i-flex.large** instance with the following stack:
+
+| Component | Details |
+|-----------|---------|
+| **OS** | Ubuntu 24.04 LTS |
+| **Kubernetes** | K3s (lightweight, single-node) |
+| **Ingress** | ingress-nginx (NodePort 30080) |
+| **Reverse Proxy** | Nginx (port 80 → frontend, /api → backend, wildcard store routing) |
+| **Process Manager** | PM2 (auto-restart, log rotation) |
+| **Database** | PostgreSQL 16 (Docker, port 5433) |
+| **DNS** | nip.io wildcard (`store-<id>.65.0.165.214.nip.io`) |
+| **CI/CD** | GitHub Actions → SSH deploy on push to `main` |
+
+### Deployment Steps
+
+```bash
+# 1. SSH into EC2
+ssh -i your-key.pem ubuntu@<ELASTIC_IP>
+
+# 2. Install prerequisites
+sudo apt update && sudo apt install -y docker.io nodejs npm nginx
+curl -sfL https://get.k3s.io | sh -
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+# 3. Install ingress-nginx
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/baremetal/deploy.yaml
+
+# 4. Clone and setup backend
+git clone https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store.git
+cd Multi-Tenant_Ecommerce_Store/backend
+npm ci --production
+npm run db:migrate && npm run db:seed
+pm2 start src/index.js --name mtec-backend
+pm2 save && pm2 startup
+
+# 5. Build and deploy frontend
+cd ../frontend && npm ci && npm run build
+sudo mkdir -p /var/www/mtec
+sudo cp -r dist/* /var/www/mtec/
+
+# 6. Configure Nginx (reverse proxy + wildcard store routing)
+# See the Nginx config section below for the full configuration
+sudo systemctl restart nginx
+```
+
+### Nginx Configuration (Production)
+
+```nginx
+# /etc/nginx/sites-available/mtec
+server {
+    listen 80 default_server;
+    server_name <ELASTIC_IP>;
+
+    root /var/www/mtec;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 600s;
+    }
+}
+
+server {
+    listen 80;
+    server_name ~^store-.*\.nip\.io$;
+
+    location / {
+        proxy_pass http://127.0.0.1:30080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+---
+
 ## Roadmap
+
+The platform is architected for extensibility. Below are planned features that would elevate it toward a production-grade SaaS offering:
 
 ### Gen AI Orchestration (Planned)
 
-The provisioning infrastructure is designed to support **AI-driven store creation**. A Gen AI orchestration layer will allow users to describe their desired store configuration in natural language, and the platform will automatically translate that into provisioning parameters, engine selection, and post-setup customization — eliminating manual input entirely.
+An AI-driven store creation layer that allows tenants to describe their desired store in natural language. The orchestration engine will:
+
+- **Natural Language → Provisioning Config**: Parse prompts like *"Create a fashion store with WooCommerce and Astra theme"* into engine selection, theme choice, and product category seeding
+- **AI Product Catalog Generation**: Auto-generate product titles, descriptions, pricing, and placeholder images using LLM + image generation APIs
+- **Intelligent Theme Recommendation**: Suggest optimal engine + theme combinations based on the tenant's industry and scale requirements
+- **Conversational Store Management**: Enable tenants to manage inventory, pricing, and promotions through a chat interface
+- **Anomaly Detection**: Monitor store health metrics and auto-trigger scaling or alerts using ML-based anomaly detection
 
 The current architecture (state machine, Helm abstraction, multi-engine support, concurrency semaphore) has been designed with this extensibility in mind.
 
+### Additional Planned Features
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Custom Domain Support** | Tenant-provided domains with automatic TLS via cert-manager | Planned |
+| **Store Templates Marketplace** | Pre-configured store blueprints (fashion, electronics, food delivery) | Planned |
+| **Auto-Scaling per Store** | HPA (Horizontal Pod Autoscaler) with traffic-based scaling per namespace | Planned |
+| **Backup & Restore** | Scheduled PVC snapshots with one-click restore for store data | Planned |
+| **Multi-Cluster Federation** | Deploy stores across multiple Kubernetes clusters for geo-distribution | Planned |
+| **Billing & Metering** | Usage-based billing with Stripe integration, resource consumption tracking | Planned |
+| **Webhook Notifications** | Real-time webhooks for store lifecycle events (provisioned, failed, deleted) | Planned |
+| **Store Health Dashboard** | Per-store CPU/memory/traffic metrics with Grafana dashboards | Planned |
+| **Plugin Marketplace** | Allow tenants to install vetted WooCommerce/Medusa plugins from a curated catalog | Planned |
+| **White-Label Branding** | Full dashboard theming and custom logos per tenant organization | Planned |
+
+---
+
 ## License
 
-MIT
+This project is licensed under the **MIT License**.
+
+```
+MIT License
+
+Copyright (c) 2025-2026 Abhishek Mahajan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome! Whether it's a bug fix, feature implementation, documentation improvement, or test coverage — every contribution helps make this platform better.
 
-The CI pipeline will automatically validate your changes.
+### How to Contribute
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Commit** your changes with conventional commits (`git commit -m 'feat: add amazing feature'`)
+4. **Push** to your branch (`git push origin feature/amazing-feature`)
+5. **Open a Pull Request** with a clear description of the changes
+
+### Contribution Guidelines
+
+- Follow the existing code style (ESLint + Prettier configurations are included)
+- Write or update tests for any new functionality
+- Ensure all CI checks pass before requesting review (`npm run lint`, `npm test`, `helm lint`)
+- Use [conventional commits](https://www.conventionalcommits.org/) for commit messages
+- Keep PRs focused — one feature or fix per pull request
+
+### Good First Issues
+
+Look for issues tagged with [`good first issue`](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/labels/good%20first%20issue) or [`help wanted`](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/labels/help%20wanted) to get started.
+
+### Areas for Contribution
+
+- **New e-commerce engines**: Shopify Headless, PrestaShop, Magento integration
+- **Gen AI orchestration**: Natural language store creation, AI product seeding
+- **Monitoring & Observability**: Grafana dashboards, Loki log aggregation
+- **Multi-cluster support**: Federation, geo-distributed deployments
+- **UI/UX improvements**: Dark mode, mobile responsiveness, accessibility
+- **Documentation**: Tutorials, video walkthroughs, API examples
+
+The CI pipeline will automatically validate your changes on every push and pull request.

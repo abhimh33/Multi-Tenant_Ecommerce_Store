@@ -2,6 +2,10 @@
 
 > Architecture decisions, failure handling, and production considerations for the Multi-Tenant E-commerce Provisioning Platform.
 
+**Live Demo:** [http://65.0.165.214](http://65.0.165.214) | **API:** [http://65.0.165.214/api/v1/health](http://65.0.165.214/api/v1/health)
+
+> If the demo URL is inactive, the AWS EC2 instance may have been paused to manage hosting costs. Please contact the repository owner to request reactivation.
+
 ---
 
 ## Table of Contents
@@ -17,7 +21,8 @@
 9. [Observability & Monitoring](#observability--monitoring)
 10. [Scaling Model](#scaling-model)
 11. [Production Environment Differences](#production-environment-differences)
-12. [Known Tradeoffs & Accepted Limitations](#known-tradeoffs--accepted-limitations)
+12. [Production Deployment (AWS EC2)](#production-deployment-aws-ec2)
+13. [Known Tradeoffs & Accepted Limitations](#known-tradeoffs--accepted-limitations)
 
 ---
 
@@ -583,6 +588,43 @@ rbac:
 ```
 
 When enabled, each store namespace gets a dedicated ServiceAccount with least-privilege permissions.
+
+---
+
+## Production Deployment (AWS EC2)
+
+The platform is deployed on **AWS EC2 m7i-flex.large** (2 vCPU, 8 GB RAM) with Elastic IP `65.0.165.214`.
+
+### Infrastructure Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Kubernetes** | K3s (single-node) | Lightweight cluster for store namespaces |
+| **Ingress Controller** | ingress-nginx (NodePort 30080) | Routes wildcard subdomains to store pods |
+| **Reverse Proxy** | Nginx (port 80) | Serves frontend SPA, proxies `/api` to backend, routes `store-*.nip.io` to ingress |
+| **Process Manager** | PM2 | Backend auto-restart, log rotation, startup persistence |
+| **Control Plane DB** | PostgreSQL 16 (Docker) | Stores, users, audit logs |
+| **DNS** | nip.io wildcard | `store-<id>.65.0.165.214.nip.io` resolves to EC2 without custom DNS |
+| **CI/CD** | GitHub Actions | Lint, test, build on every push; SSH deploy to EC2 on `main` |
+
+### Request Flow (Production)
+
+```
+Browser → Nginx (:80)
+  ├── /              → /var/www/mtec (React SPA)
+  ├── /api/*         → proxy_pass :3001 (Express backend)
+  └── store-*.nip.io → proxy_pass :30080 (ingress-nginx → K8s pod)
+```
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **K3s over K8s** | Single-node EC2; K3s includes Traefik + local-path provisioner out of the box, minimal resource overhead |
+| **ingress-nginx over Traefik** | Consistent with local dev (Docker Desktop uses nginx-ingress); deployed via Helm with NodePort for predictable port binding |
+| **nip.io over Route53** | Zero DNS configuration required; wildcard subdomains resolve via IP-based naming convention |
+| **PM2 over systemd** | Built-in log rotation, process monitoring, zero-config restart; `pm2 startup` generates systemd unit automatically |
+| **Nginx over direct exposure** | Unified entry point for SPA + API + store routing; handles static file serving efficiently |
 
 ---
 
