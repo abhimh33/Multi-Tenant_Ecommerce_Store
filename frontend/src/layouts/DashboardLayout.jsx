@@ -16,7 +16,6 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
-  Info,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
@@ -315,22 +314,6 @@ function SidebarContent({ onNavigate }) {
   );
 }
 
-function FreePlanBanner() {
-  const { isAdmin } = useAuth();
-  if (isAdmin) return null;
-
-  return (
-    <div className="mx-4 mt-4 md:mx-6 md:mt-6 lg:mx-8 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200 flex items-center gap-2.5">
-      <Info className="h-4 w-4 shrink-0" />
-      <p>
-        <span className="font-medium">Free Plan</span>
-        {' \u2014 '}
-        You can create up to 2 active stores at no cost. Plan upgrades with higher limits are coming soon.
-      </p>
-    </div>
-  );
-}
-
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -370,9 +353,6 @@ export default function DashboardLayout() {
             <span className="font-semibold">MT Ecommerce</span>
           </div>
         </header>
-
-        {/* Free plan banner for tenant users */}
-        <FreePlanBanner />
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
-import { Store, CheckCircle, AlertCircle, Loader2, Server, Database } from 'lucide-react';
+import { Store, CheckCircle, AlertCircle, Loader2, Server, Database, Info } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 
@@ -63,12 +63,24 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Welcome back, {user?.username}
-          {isAdmin && <Badge variant="warning" className="ml-2">Admin</Badge>}
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome back, {user?.username}
+            {isAdmin && <Badge variant="warning" className="ml-2">Admin</Badge>}
+          </p>
+        </div>
+        {!isAdmin && (
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200 flex items-center gap-2">
+            <Info className="h-4 w-4 shrink-0" />
+            <p>
+              <span className="font-medium">Free Plan</span>
+              {' \u2014 '}
+              You can create up to 2 active stores at no cost. Plan upgrades with higher limits are coming soon.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Stats grid */}

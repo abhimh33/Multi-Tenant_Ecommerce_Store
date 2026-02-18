@@ -111,7 +111,7 @@ export default function CreateStore() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2 border border-border">
+            <p className="text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-md px-3 py-2 dark:text-blue-200 dark:bg-blue-950 dark:border-blue-800">
               Free plan allows up to {FREE_PLAN_LIMIT} active stores per account. Need more? Contact the administrator.
             </p>
             <div className="space-y-2">
