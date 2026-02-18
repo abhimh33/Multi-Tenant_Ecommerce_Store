@@ -268,7 +268,7 @@ function SidebarContent({ onNavigate }) {
           </DialogHeader>
           <DialogFooter className="flex gap-2 sm:justify-center">
             <Button
-              variant="outline"
+              variant="destructive"
               onClick={() => setShowAdminStoreDialog(false)}
             >
               Understood
