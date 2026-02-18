@@ -11,6 +11,11 @@ jest.mock('../../src/services/storeRegistry', () => ({
   countActiveByOwner: mockCountActiveByOwner,
 }));
 
+// Mock config with a fixed limit so tests don't depend on .env
+jest.mock('../../src/config', () => ({
+  provisioning: { maxStoresPerUser: 3 },
+}));
+
 jest.mock('../../src/utils/logger', () => {
   const child = () => ({
     info: jest.fn(),
@@ -60,7 +65,7 @@ describe('guardrails', () => {
     });
 
     it('should reject when at limit', async () => {
-      mockCountActiveByOwner.mockResolvedValue(5);
+      mockCountActiveByOwner.mockResolvedValue(3);
       const req = mockReq();
       const res = mockRes();
       const next = jest.fn();
