@@ -70,10 +70,10 @@ class ValidationError extends AppError {
 
 class StoreLimitError extends AppError {
   constructor(limit) {
-    super(`Maximum of ${limit} active stores per user reached.`, {
+    super(`You have reached the maximum of ${limit} active stores on the Free plan. Please delete an existing store or contact the administrator to upgrade your plan.`, {
       statusCode: 429,
       code: 'STORE_LIMIT_EXCEEDED',
-      suggestion: 'Delete an existing store before creating a new one.',
+      suggestion: 'Delete an existing store or upgrade your plan to create more.',
     });
   }
 }

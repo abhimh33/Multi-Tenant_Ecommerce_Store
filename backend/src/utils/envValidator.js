@@ -42,7 +42,7 @@ const envSchema = Joi.object({
   HELM_DEBUG: Joi.string().valid('true', 'false').default('false'),
 
   // ─── Provisioning ─────────────────────────────────────────────────────
-  MAX_STORES_PER_USER: Joi.number().integer().min(1).max(100).default(5),
+  MAX_STORES_PER_USER: Joi.number().integer().min(1).max(100).default(2),
   PROVISIONING_TIMEOUT_MS: Joi.number().integer().min(10000).default(600000),
   PROVISIONING_POLL_INTERVAL_MS: Joi.number().integer().min(1000).default(5000),
   PROVISIONING_MAX_RETRIES: Joi.number().integer().min(0).max(10).default(3),

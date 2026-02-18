@@ -10,6 +10,8 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { Rocket, ArrowLeft, Shield } from 'lucide-react';
 
+const FREE_PLAN_LIMIT = 2;
+
 export default function CreateStore() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -109,6 +111,9 @@ export default function CreateStore() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2 border border-border">
+              Free plan allows up to {FREE_PLAN_LIMIT} active stores per account. Need more? Contact the administrator.
+            </p>
             <div className="space-y-2">
               <Label htmlFor="name">Store Name</Label>
               <Input

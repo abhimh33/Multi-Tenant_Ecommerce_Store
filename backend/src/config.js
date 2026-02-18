@@ -53,7 +53,7 @@ const config = {
   },
 
   provisioning: {
-    maxStoresPerUser: parseInt(process.env.MAX_STORES_PER_USER, 10) || 5,
+    maxStoresPerUser: parseInt(process.env.MAX_STORES_PER_USER, 10) || 2,
     timeoutMs: parseInt(process.env.PROVISIONING_TIMEOUT_MS, 10) || 600000, // 10 min
     pollIntervalMs: parseInt(process.env.PROVISIONING_POLL_INTERVAL_MS, 10) || 3000,
     maxRetries: parseInt(process.env.PROVISIONING_MAX_RETRIES, 10) || 3,

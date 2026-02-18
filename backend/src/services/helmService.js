@@ -71,8 +71,15 @@ async function install({ releaseName, namespace, engine, setValues = {}, valuesF
     ...setValues,
   };
 
+  // Use --set-string for sensitive/credential values to prevent Helm
+  // from auto-parsing numeric passwords as int64 (which breaks b64enc)
+  const stringKeys = /password|secret|email|username/i;
   for (const [key, value] of Object.entries(allSetValues)) {
-    args.push('--set', `${key}=${value}`);
+    if (stringKeys.test(key)) {
+      args.push('--set-string', `${key}=${value}`);
+    } else {
+      args.push('--set', `${key}=${value}`);
+    }
   }
 
   if (config.helm.debug) {
