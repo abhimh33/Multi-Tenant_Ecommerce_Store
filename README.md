@@ -437,16 +437,28 @@ After the store reaches **ready** status the automated setup has already install
 
 ## CI/CD Pipeline
 
-The project includes a GitHub Actions CI pipeline that automatically validates code quality on every push and pull request.
+The project includes a full **CI/CD pipeline** powered by GitHub Actions. Every push and pull request triggers automated validation; merges to `main` automatically deploy to the production EC2 instance.
 
 ### Pipeline Jobs
 
 | Job | Purpose | Steps |
 |-----|---------|-------|
-| **Backend** | Lint + Test | Install deps → ESLint → Unit tests → Integration tests (with PostgreSQL service container) |
-| **Frontend** | Lint + Build | Install deps → ESLint → Vite build |
+| **Backend** | Lint + Test | Install deps → ESLint → Unit tests → DB migrate → Integration tests (PostgreSQL service container) |
+| **Frontend** | Lint + Build | Install deps → ESLint → Vite production build |
 | **Helm** | Chart Validation | Lint chart → Template rendering for both engines (WooCommerce + MedusaJS) |
-| **Docker** | Build Validation | Build backend and frontend Docker images (no push) |
+| **Docker** | Build Validation | Build backend, frontend, and Medusa Docker images (no push) |
+| **Deploy** | CD → AWS EC2 | SSH into EC2 → `git pull` → `npm ci` → DB migrate → PM2 restart → Frontend build → Nginx reload |
+
+> **Deploy** only runs on pushes to `main` after all CI jobs pass. It uses [appleboy/ssh-action](https://github.com/appleboy/ssh-action) with secrets (`EC2_HOST`, `EC2_SSH_KEY`) — no credentials are stored in code.
+
+### Pipeline Flow
+
+```
+push / PR → Backend lint+test ──┐
+            Frontend lint+build ─┤
+            Helm chart lint ─────┤── all pass ──► Deploy to EC2 (main only)
+            Docker build ────────┘
+```
 
 ### Workflow File
 
@@ -1513,7 +1525,7 @@ This project is licensed under the **MIT License**.
 ```
 MIT License
 
-Copyright (c) 2025-2026 Abhishek Mahajan
+Copyright (c) 2025-2026 Abdulappa
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
