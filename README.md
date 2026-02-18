@@ -8,15 +8,13 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 
 | Service | URL |
 |---------|-----|
-| **Dashboard (Frontend)** | [http://65.0.165.214](http://65.0.165.214) |
-| **Backend API** | [http://65.0.165.214/api/v1/health](http://65.0.165.214/api/v1/health) |
-| **Provisioned Stores** | `http://store-<id>.65.0.165.214.nip.io` (auto-generated per store) |
+| **Dashboard (Frontend)** | Available on request |
+| **Backend API** | Available on request |
+| **Provisioned Stores** | Auto-generated per store on deployment |
 
-> **Note:** The live demo is hosted on AWS EC2. If the URL is inactive or unreachable, the instance may have been stopped to manage hosting costs. To request reactivation, please reach out to the repository owner via [email](mailto:abhimh33@gmail.com) or open a [GitHub Issue](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/issues). The instance will be brought back online promptly.
+> **Note:** The live demo is hosted on AWS EC2. If you'd like to access the live demo or need credentials, please reach out to the repository owner via [email](mailto:abhimh33@gmail.com) or open a [GitHub Issue](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/issues). The instance may be stopped periodically to manage AWS hosting costs and will be brought back online promptly upon request.
 
-**Demo Credentials (Admin):**
-- Email: `admin@example.com`
-- Password: `admin123!`
+> **Security:** Demo credentials and server addresses are not published in this repository. Contact the project owner for access.
 
 ---
 
@@ -382,7 +380,7 @@ cp .env.example .env
 # Run database migrations
 npm run db:migrate
 
-# Seed the admin user (admin@example.com / admin123!)
+# Seed the admin user
 npm run db:seed
 
 # Start the backend
@@ -1403,7 +1401,7 @@ The platform is deployed on an **AWS EC2 m7i-flex.large** instance with the foll
 | **Reverse Proxy** | Nginx (port 80 → frontend, /api → backend, wildcard store routing) |
 | **Process Manager** | PM2 (auto-restart, log rotation) |
 | **Database** | PostgreSQL 16 (Docker, port 5433) |
-| **DNS** | nip.io wildcard (`store-<id>.65.0.165.214.nip.io`) |
+| **DNS** | nip.io wildcard (`store-<id>.<ELASTIC_IP>.nip.io`) |
 | **CI/CD** | GitHub Actions → SSH deploy on push to `main` |
 
 ### Deployment Steps

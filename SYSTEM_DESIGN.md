@@ -2,9 +2,9 @@
 
 > Architecture decisions, failure handling, and production considerations for the Multi-Tenant E-commerce Provisioning Platform.
 
-**Live Demo:** [http://65.0.165.214](http://65.0.165.214) | **API:** [http://65.0.165.214/api/v1/health](http://65.0.165.214/api/v1/health)
+**Live Demo:** Available on request — contact the repository owner for access.
 
-> If the demo URL is inactive, the AWS EC2 instance may have been paused to manage hosting costs. Please contact the repository owner to request reactivation.
+> If the demo is inactive, the AWS EC2 instance may have been paused to manage hosting costs. Please reach out via [GitHub Issues](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/issues) to request reactivation.
 
 ---
 
@@ -593,7 +593,7 @@ When enabled, each store namespace gets a dedicated ServiceAccount with least-pr
 
 ## Production Deployment (AWS EC2)
 
-The platform is deployed on **AWS EC2 m7i-flex.large** (2 vCPU, 8 GB RAM) with Elastic IP `65.0.165.214`.
+The platform is deployed on **AWS EC2 m7i-flex.large** (2 vCPU, 8 GB RAM) with an Elastic IP.
 
 ### Infrastructure Stack
 
@@ -604,7 +604,7 @@ The platform is deployed on **AWS EC2 m7i-flex.large** (2 vCPU, 8 GB RAM) with E
 | **Reverse Proxy** | Nginx (port 80) | Serves frontend SPA, proxies `/api` to backend, routes `store-*.nip.io` to ingress |
 | **Process Manager** | PM2 | Backend auto-restart, log rotation, startup persistence |
 | **Control Plane DB** | PostgreSQL 16 (Docker) | Stores, users, audit logs |
-| **DNS** | nip.io wildcard | `store-<id>.65.0.165.214.nip.io` resolves to EC2 without custom DNS |
+| **DNS** | nip.io wildcard | `store-<id>.<ELASTIC_IP>.nip.io` resolves to EC2 without custom DNS |
 | **CI/CD** | GitHub Actions | Lint, test, build on every push; SSH deploy to EC2 on `main` |
 
 ### Request Flow (Production)
