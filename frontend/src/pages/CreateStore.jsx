@@ -106,8 +106,8 @@ export default function CreateStore() {
             <CardTitle>Store Configuration</CardTitle>
             <CardDescription>
               {form.engine === 'woocommerce'
-                ? 'Configure your new store. A dedicated Kubernetes namespace will be created with WordPress, WooCommerce, and a MariaDB database.'
-                : 'Configure your new store. A dedicated Kubernetes namespace will be created with MedusaJS and a PostgreSQL database.'}
+                ? 'Launch your online store in minutes — we handle the hosting, database, and infrastructure so you can focus on growing your business.'
+                : 'Get your MedusaJS-powered storefront up and running instantly — fully managed infrastructure, ready for you to start selling.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
