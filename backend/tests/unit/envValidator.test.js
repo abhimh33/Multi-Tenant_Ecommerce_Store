@@ -25,7 +25,7 @@ describe('Environment Validator', () => {
     expect(validated.HOST).toBe('0.0.0.0');
     expect(validated.LOG_LEVEL).toBe('debug');
     expect(validated.HELM_VALUES_FILE).toBe('values-local.yaml');
-    expect(validated.MAX_STORES_PER_USER).toBe(5);
+    expect(validated.MAX_STORES_PER_USER).toBe(2);
   });
 
   it('rejects invalid NODE_ENV', () => {
