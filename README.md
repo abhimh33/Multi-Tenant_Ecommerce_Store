@@ -8,13 +8,13 @@ A Kubernetes-native platform for provisioning and managing isolated e-commerce s
 
 | Service | URL |
 |---------|-----|
-| **Dashboard (Frontend)** | Available on request |
-| **Backend API** | Available on request |
-| **Provisioned Stores** | Auto-generated per store on deployment |
+| **Dashboard (Frontend)** | [Live Dashboard](http://65.0.165.214) |
+| **Backend API** | [API Health Check](http://65.0.165.214/api/v1/health) |
+| **Provisioned Stores** | `http://store-<id>.<server>.nip.io` (auto-generated per store) |
 
-> **Note:** The live demo is hosted on AWS EC2. If you'd like to access the live demo or need credentials, please reach out to the repository owner via [email](mailto:abhimh33@gmail.com) or open a [GitHub Issue](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/issues). The instance may be stopped periodically to manage AWS hosting costs and will be brought back online promptly upon request.
+> **Note:** The live demo is hosted on AWS EC2. If the URL is inactive or you need admin credentials, please reach out to the repository owner via [email](mailto:abhimh33@gmail.com) or open a [GitHub Issue](https://github.com/abhimh33/Multi-Tenant_Ecommerce_Store/issues). The instance may be stopped periodically to manage AWS hosting costs and will be brought back online promptly upon request.
 
-> **Security:** Demo credentials and server addresses are not published in this repository. Contact the project owner for access.
+> **Security:** Demo credentials are not published in this repository. Contact the project owner for access.
 
 ---
 
