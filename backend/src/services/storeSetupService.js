@@ -313,28 +313,12 @@ async function setupWooCommerce({ namespace, storeId, siteUrl, credentials, them
 
     // Create mu-plugin to remove "New in store" products from empty cart page
     // Storefront theme injects recent products below the empty cart message — bad UX
+    // NOTE: Uses base64 encoding to avoid heredoc termination issues.
+    // When array items are .join('; ')-ed, a heredoc terminator like MUEOF gets
+    // the next command appended on the same line, so bash never recognises the end.
     `echo "=== Clean Cart Page ==="`,
     `mkdir -p /var/www/html/wp-content/mu-plugins`,
-    `cat > /var/www/html/wp-content/mu-plugins/clean-cart.php << 'MUEOF'
-<?php
-/**
- * Plugin Name: Clean Cart Page
- * Description: Remove product recommendations from empty cart page
- */
-add_action('wp', function() {
-    if (function_exists('is_cart') && is_cart()) {
-        remove_action('storefront_homepage', 'storefront_recent_products', 50);
-        remove_action('storefront_homepage', 'storefront_popular_products', 50);
-        remove_action('storefront_homepage', 'storefront_on_sale_products', 50);
-        remove_action('storefront_homepage', 'storefront_promoted_products', 50);
-        remove_action('storefront_homepage', 'storefront_best_selling_products', 50);
-        remove_action('woocommerce_cart_collaterals', 'woocommerce_cross_sell_display');
-        add_action('wp_head', function() {
-            echo '<style>.woocommerce-cart .storefront-product-section, .woocommerce-cart .storefront-recent-products, .woocommerce-cart .cart-empty ~ .products, .woocommerce-cart .return-to-shop ~ *, .woocommerce-cart .woocommerce + .storefront-product-section { display:none!important; }</style>';
-        });
-    }
-});
-MUEOF`,
+    `echo "PD9waHAKLyoqCiAqIFBsdWdpbiBOYW1lOiBDbGVhbiBDYXJ0IFBhZ2UKICogRGVzY3JpcHRpb246IFJlbW92ZSBwcm9kdWN0IHJlY29tbWVuZGF0aW9ucyBmcm9tIGVtcHR5IGNhcnQgcGFnZQogKi8KYWRkX2FjdGlvbignd3AnLCBmdW5jdGlvbigpIHsKICAgIGlmIChmdW5jdGlvbl9leGlzdHMoJ2lzX2NhcnQnKSAmJiBpc19jYXJ0KCkpIHsKICAgICAgICByZW1vdmVfYWN0aW9uKCdzdG9yZWZyb250X2hvbWVwYWdlJywgJ3N0b3JlZnJvbnRfcmVjZW50X3Byb2R1Y3RzJywgNTApOwogICAgICAgIHJlbW92ZV9hY3Rpb24oJ3N0b3JlZnJvbnRfaG9tZXBhZ2UnLCAnc3RvcmVmcm9udF9wb3B1bGFyX3Byb2R1Y3RzJywgNTApOwogICAgICAgIHJlbW92ZV9hY3Rpb24oJ3N0b3JlZnJvbnRfaG9tZXBhZ2UnLCAnc3RvcmVmcm9udF9vbl9zYWxlX3Byb2R1Y3RzJywgNTApOwogICAgICAgIHJlbW92ZV9hY3Rpb24oJ3N0b3JlZnJvbnRfaG9tZXBhZ2UnLCAnc3RvcmVmcm9udF9wcm9tb3RlZF9wcm9kdWN0cycsIDUwKTsKICAgICAgICByZW1vdmVfYWN0aW9uKCdzdG9yZWZyb250X2hvbWVwYWdlJywgJ3N0b3JlZnJvbnRfYmVzdF9zZWxsaW5nX3Byb2R1Y3RzJywgNTApOwogICAgICAgIHJlbW92ZV9hY3Rpb24oJ3dvb2NvbW1lcmNlX2NhcnRfY29sbGF0ZXJhbHMnLCAnd29vY29tbWVyY2VfY3Jvc3Nfc2VsbF9kaXNwbGF5Jyk7CiAgICAgICAgYWRkX2FjdGlvbignd3BfaGVhZCcsIGZ1bmN0aW9uKCkgewogICAgICAgICAgICBlY2hvICc8c3R5bGU+Lndvb2NvbW1lcmNlLWNhcnQgLnN0b3JlZnJvbnQtcHJvZHVjdC1zZWN0aW9uLCAud29vY29tbWVyY2UtY2FydCAuc3RvcmVmcm9udC1yZWNlbnQtcHJvZHVjdHMsIC53b29jb21tZXJjZS1jYXJ0IC5jYXJ0LWVtcHR5IH4gLnByb2R1Y3RzLCAud29vY29tbWVyY2UtY2FydCAucmV0dXJuLXRvLXNob3AgfiAqLCAud29vY29tbWVyY2UtY2FydCAud29vY29tbWVyY2UgKyAuc3RvcmVmcm9udC1wcm9kdWN0LXNlY3Rpb24geyBkaXNwbGF5Om5vbmUhaW1wb3J0YW50OyB9PC9zdHlsZT4nOwogICAgICAgIH0pOwogICAgfQp9KTs=" | base64 -d > /var/www/html/wp-content/mu-plugins/clean-cart.php`,
 
     // Verify
     `echo "=== Verify ==="`,
